@@ -15,3 +15,7 @@ Team project for the Monad Metropolis hackathon (Consumer Products & Payments tr
 | `sohan` | Sohan |
 | `aadit` | Aadit |
 | `rohan` | Rohan |
+
+## License
+
+[MIT](LICENSE)
