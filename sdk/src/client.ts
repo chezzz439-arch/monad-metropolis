@@ -1,4 +1,4 @@
-import type { Address, Hash, PublicClient } from "viem";
+import { getAbiItem, type Address, type Hash, type PublicClient } from "viem";
 import { chitCircleAbi } from "./abi";
 import {
   Mode,
@@ -6,9 +6,13 @@ import {
   type CircleView,
   type CreateCircleArgs,
   type ChitSigner,
+  type DiscoveryOptions,
   type MemberStatus,
   type TxResult,
 } from "./types";
+
+const circleCreatedEvent = getAbiItem({ abi: chitCircleAbi, name: "CircleCreated" });
+const joinedEvent = getAbiItem({ abi: chitCircleAbi, name: "Joined" });
 
 export const erc20Abi = [
   {
@@ -65,14 +69,20 @@ const MAX_UINT256 = (1n << 256n) - 1n;
  * a circle before the user has signed in.
  */
 export class ChitCircleClient {
+  /**
+   * @param deployBlock Block the contract was deployed in. Discovery scans from
+   *        here; without it every lookup walks the chain from genesis, which
+   *        most public RPCs will refuse.
+   */
   constructor(
     readonly address: Address,
     readonly publicClient: PublicClient,
     private signer?: ChitSigner,
+    readonly deployBlock: bigint = 0n,
   ) {}
 
   withSigner(signer: ChitSigner): ChitCircleClient {
-    return new ChitCircleClient(this.address, this.publicClient, signer);
+    return new ChitCircleClient(this.address, this.publicClient, signer, this.deployBlock);
   }
 
   private requireSigner(): ChitSigner {
@@ -185,6 +195,91 @@ export class ChitCircleClient {
     const payoutRound = slot === -1 ? -1 : order.indexOf(slot);
 
     return { address: who, isMember, deposit, defaulted, depositWithdrawn, paidThisRound, slot, payoutRound };
+  }
+
+  // -- discovery -----------------------------------------------------------
+
+  /**
+   * Scan logs in chunks. Public RPCs cap how many blocks one `eth_getLogs` may
+   * span, so a single wide query fails on a chain that has been alive a while.
+   */
+  private async scanLogs(
+    event: typeof circleCreatedEvent | typeof joinedEvent,
+    args: Record<string, unknown>,
+    opts: DiscoveryOptions = {},
+  ): Promise<readonly { args: Record<string, unknown> }[]> {
+    const from = opts.fromBlock ?? this.deployBlock;
+    const to = opts.toBlock ?? (await this.publicClient.getBlockNumber());
+    const step = opts.maxBlockRange ?? 10_000n;
+
+    const collected: { args: Record<string, unknown> }[] = [];
+    for (let start = from; start <= to; start += step) {
+      const end = start + step - 1n > to ? to : start + step - 1n;
+      const logs = await this.publicClient.getLogs({
+        address: this.address,
+        event,
+        args,
+        fromBlock: start,
+        toBlock: end,
+      } as unknown as Parameters<PublicClient["getLogs"]>[0]);
+      collected.push(...(logs as unknown as { args: Record<string, unknown> }[]));
+    }
+    return collected;
+  }
+
+  /**
+   * Circle ids `who` organized or joined, ascending.
+   *
+   * Reads `CircleCreated` and `Joined`, both of which index the member, so the
+   * RPC does the filtering. Good enough for the demo and for small real use;
+   * swap in an Envio index if a user ever has many circles.
+   */
+  async circleIdsFor(who: Address, opts: DiscoveryOptions = {}): Promise<bigint[]> {
+    const [created, joined] = await Promise.all([
+      this.scanLogs(circleCreatedEvent, { organizer: who }, opts),
+      this.scanLogs(joinedEvent, { member: who }, opts),
+    ]);
+
+    const ids = new Set<bigint>();
+    for (const log of [...created, ...joined]) {
+      const id = log.args["circleId"];
+      if (typeof id === "bigint") ids.add(id);
+    }
+    return [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  }
+
+  /** {@link circleIdsFor}, resolved to full views. */
+  async myCircles(who: Address, opts: DiscoveryOptions = {}): Promise<CircleView[]> {
+    const ids = await this.circleIdsFor(who, opts);
+    return this.getCircleViews(ids, who);
+  }
+
+  /** Several circle views in parallel. */
+  async getCircleViews(circleIds: readonly bigint[], me?: Address): Promise<CircleView[]> {
+    return Promise.all(circleIds.map((id) => this.getCircleView(id, me)));
+  }
+
+  /** Members of a circle, each with their status — for the roster screen. */
+  async getRoster(circleId: bigint): Promise<MemberStatus[]> {
+    const [circle, members, payoutOrder] = await Promise.all([
+      this.getCircle(circleId),
+      this.getMembers(circleId),
+      this.getPayoutOrder(circleId),
+    ]);
+    return Promise.all(
+      members.map((m) => this.getMemberStatus(circleId, m, circle, members, payoutOrder)),
+    );
+  }
+
+  /**
+   * Does this circle id exist? Use before rendering an invite link, so a bad
+   * link shows "circle not found" rather than an empty screen.
+   */
+  async circleExists(circleId: bigint): Promise<boolean> {
+    const next = await this.nextCircleId();
+    if (circleId >= next) return false;
+    const circle = await this.getCircle(circleId);
+    return circle.contribution > 0n;
   }
 
   // -- writes --------------------------------------------------------------

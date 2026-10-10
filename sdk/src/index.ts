@@ -6,6 +6,7 @@ export {
   type CircleView,
   type ChitSigner,
   type CreateCircleArgs,
+  type DiscoveryOptions,
   type MemberStatus,
   type TxResult,
 } from "./types";
@@ -15,7 +16,9 @@ export {
   useCircle,
   useContribute,
   useCreateCircle,
+  useInvite,
   useJoinCircle,
+  useMyCircles,
   usePrimaryAction,
   useRoundCountdown,
   useSendToMember,
@@ -23,9 +26,20 @@ export {
   useTokenBalance,
   useWithdrawDeposit,
   type CircleAction,
+  type InviteStatus,
   type ReadState,
   type WriteState,
 } from "./hooks";
+export {
+  DEFAULT_INVITE_BASE,
+  INVITE_SCHEME,
+  buildDeepLink,
+  buildInviteLink,
+  checkInviteTarget,
+  parseInviteLink,
+  type InviteLinkOptions,
+  type InviteTarget,
+} from "./invite";
 export {
   AUSD_DECIMALS,
   formatAmount,

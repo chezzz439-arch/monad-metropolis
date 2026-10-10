@@ -64,6 +64,15 @@ export interface MemberStatus {
   payoutRound: number;
 }
 
+export interface DiscoveryOptions {
+  /** Defaults to the client's `deployBlock`. */
+  fromBlock?: bigint;
+  /** Defaults to the current head. */
+  toBlock?: bigint;
+  /** Blocks per `eth_getLogs` call. Lower it if the RPC rejects the range. */
+  maxBlockRange?: bigint;
+}
+
 export interface CreateCircleArgs {
   token: Address;
   contribution: bigint;

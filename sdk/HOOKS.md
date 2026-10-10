@@ -45,6 +45,8 @@ interface TxResult { hash: `0x${string}`; settledInSeconds: number }
 | Hook | Returns | Notes |
 |---|---|---|
 | `useCircle(circleId, me?, pollMs?)` | `CircleView` | Everything a circle screen needs. Polls every 4s, so other members' payments appear on their own. |
+| `useMyCircles(me, opts?, pollMs?)` | `CircleView[]` | The home-screen list. Event-log scan — **does not poll by default**, call `refresh` after a create or join. |
+| `useInvite(link, expected?)` | `CircleView` + `status` | Resolves an invite link. See below. |
 | `useTokenBalance(token, account, pollMs?)` | `bigint` | AUSD balance for the header. |
 | `useRoundCountdown(roundDeadline)` | `number` | Seconds left, ticking locally every 1s. Pass `circle.roundDeadline`. |
 | `usePrimaryAction(circle)` | `CircleAction` | The one button this screen should show — see below. |
@@ -131,6 +133,53 @@ deposit still claimable, defaulted. Render `label`, switch the handler on `kind`
 and disable for `waiting` / `none`. If it ever picks the wrong button that's my
 bug, not yours — tell me instead of special-casing in the screen.
 
+## Discovery and invite links
+
+**Home screen.** `useMyCircles(me)` returns every circle this account organized
+or joined. It scans `CircleCreated` and `Joined` logs, so it is slower than a
+plain read — it does **not** poll. Pass its `refresh` as the `onSuccess` of
+`useCreateCircle` / `useJoinCircle`.
+
+**Sharing a circle.** Build the link, hand it to the share sheet:
+
+```ts
+buildInviteLink(circleId, { chainId, contract })
+// "https://chitcircle.app/c/7?chain=10143&at=0x..."
+
+buildDeepLink(circleId, { chainId, contract })
+// "chitcircle://circle/7?chain=10143&at=0x..."
+```
+
+Use the **https** form for WhatsApp — a custom scheme renders as dead text
+there, and §3's whole distribution plan is one link in an existing group chat.
+
+**Opening a link.** `useInvite` parses it, verifies it belongs to this
+deployment, and loads the circle. Switch on `status`, which separates the
+failures that need different copy:
+
+| `status` | What to show |
+|---|---|
+| `idle` | No link yet |
+| `invalid` | "That doesn't look like a Chit Circle invite" |
+| `wrong-deployment` | Link is for another chain or contract — `error.message` says which |
+| `not-found` | Well-formed link, no such circle |
+| `ready` | `data` is the `CircleView`; show the join screen |
+| `error` | Network or RPC failure; `refresh` to retry |
+
+```ts
+const { data, status, error } = useInvite(link, { chainId, contract });
+```
+
+`wrong-deployment` matters more than it looks: circle ids restart at 0 on every
+deployment, so a stale link from an earlier deploy would otherwise silently
+join a *different* circle with the same number.
+
+**Caveat I want you to know about:** discovery reads logs directly from the RPC
+in 10,000-block chunks. It works and it's tested, but if the testnet RPC caps
+log ranges harder than that, `useMyCircles` will be slow or error — lower
+`maxBlockRange` via `opts`. If it becomes a problem on demo day, the fallback is
+an Envio index, and that's my job, not yours. Tell me rather than working around it.
+
 ## Formatting
 
 Don't hand-roll money or timers.
@@ -153,11 +202,17 @@ AUSD_DECIMALS                  // 6
 | Bid mode (`commitBid` / `revealBid`) | Contract reverts `NotImplemented`. Stretch goal — don't build bid UI yet. |
 | AUSD token address | Unconfirmed with Agora. Pass it in; don't hardcode. |
 | Contract address | Not deployed yet. Same. |
-| Circle discovery / "my circles" list | No indexer. Today you need a known `circleId`. Say if you need a list and I'll add event-log lookup or an Envio index. |
+| Roster-wide defaulted badges | `client.getRoster(circleId)` returns `MemberStatus[]` for every member. Not yet wrapped in a hook — ask if you want one. |
 
 ## Running it
 
 ```bash
-cd sdk && npm install && npm run typecheck   # clean as of this commit
-cd contracts && forge build && cd ../sdk && npm run abi   # after contract changes
+cd sdk && npm install
+npm run typecheck   # clean as of this commit
+npm test            # 12 passing — invite parsing and money/timer formatting
+
+cd ../contracts && forge build && cd ../sdk && npm run abi   # after contract changes
 ```
+
+`npm test` covers the pure logic only (link parsing, formatting). Anything that
+touches the chain is unverified until the contract is deployed.

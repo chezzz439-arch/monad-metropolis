@@ -9,7 +9,8 @@ import {
 } from "react";
 import type { Address } from "viem";
 import type { ChitCircleClient } from "./client";
-import type { CircleView, CreateCircleArgs, TxResult } from "./types";
+import { checkInviteTarget, parseInviteLink, type InviteTarget } from "./invite";
+import type { CircleView, CreateCircleArgs, DiscoveryOptions, TxResult } from "./types";
 
 /**
  * The surface the UI consumes. Every hook returns the same shapes:
@@ -179,6 +180,156 @@ export function useTokenBalance(token: Address | null, account: Address | null, 
   }, [client, token, account, pollMs, tick]);
 
   return { data, loading, error, refresh };
+}
+
+/**
+ * Circles this account organized or joined. Backed by an event-log scan, so it
+ * is slower than {@link useCircle} — do not poll it aggressively.
+ *
+ * @param pollMs defaults to 0 (no polling). Call `refresh` after a create or
+ *        join instead.
+ */
+export function useMyCircles(
+  me: Address | null,
+  opts: DiscoveryOptions = {},
+  pollMs = 0,
+): ReadState<CircleView[]> {
+  const client = useChitClient();
+  const [data, setData] = useState<CircleView[] | null>(null);
+  const [loading, setLoading] = useState(Boolean(me));
+  const [error, setError] = useState<Error | null>(null);
+  const [tick, setTick] = useState(0);
+
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { fromBlock, toBlock, maxBlockRange } = opts;
+
+  useEffect(() => {
+    if (!me) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const circles = await client.myCircles(me, { fromBlock, toBlock, maxBlockRange });
+        if (!cancelled) {
+          setData(circles);
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e : new Error(String(e)));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+    if (pollMs <= 0) return () => {
+      cancelled = true;
+    };
+
+    const id = setInterval(load, pollMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [client, me, fromBlock, toBlock, maxBlockRange, pollMs, tick]);
+
+  return { data, loading, error, refresh };
+}
+
+export type InviteStatus =
+  | "idle"
+  | "invalid"
+  | "wrong-deployment"
+  | "not-found"
+  | "ready"
+  | "error";
+
+/**
+ * Resolve an invite link into a circle, checking it belongs to this deployment.
+ *
+ * `status` separates the failures a screen must render differently: an
+ * unparseable link, a link for another chain or contract, and a well-formed
+ * link whose circle does not exist.
+ */
+export function useInvite(
+  link: string | null,
+  expected?: { chainId: number; contract: `0x${string}` },
+): ReadState<CircleView> & { status: InviteStatus; target: InviteTarget | null } {
+  const client = useChitClient();
+  const [status, setStatus] = useState<InviteStatus>("idle");
+  const [data, setData] = useState<CircleView | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [tick, setTick] = useState(0);
+
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const target = useMemo(() => (link ? parseInviteLink(link) : null), [link]);
+  const expectedChainId = expected?.chainId;
+  const expectedContract = expected?.contract;
+
+  useEffect(() => {
+    if (!link) {
+      setStatus("idle");
+      setData(null);
+      setLoading(false);
+      return;
+    }
+    if (!target) {
+      setStatus("invalid");
+      setData(null);
+      setLoading(false);
+      return;
+    }
+    if (expectedChainId !== undefined && expectedContract) {
+      const check = checkInviteTarget(target, { chainId: expectedChainId, contract: expectedContract });
+      if (!check.ok) {
+        setStatus("wrong-deployment");
+        setError(new Error(check.reason));
+        setData(null);
+        setLoading(false);
+        return;
+      }
+    }
+
+    let cancelled = false;
+    setLoading(true);
+
+    const load = async () => {
+      try {
+        if (!(await client.circleExists(target.circleId))) {
+          if (!cancelled) {
+            setStatus("not-found");
+            setData(null);
+          }
+          return;
+        }
+        const view = await client.getCircleView(target.circleId);
+        if (!cancelled) {
+          setData(view);
+          setStatus("ready");
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setStatus("error");
+          setError(e instanceof Error ? e : new Error(String(e)));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, link, target, expectedChainId, expectedContract, tick]);
+
+  return { data, loading, error, refresh, status, target };
 }
 
 /**
