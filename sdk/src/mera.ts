@@ -1,5 +1,5 @@
 import type { Address, Hash } from "viem";
-import type { ChitSigner } from "./types";
+import type { ChitSigner } from "./types.ts";
 
 /**
  * Mera adapter — THE ONE FILE THAT IS STILL A STUB.

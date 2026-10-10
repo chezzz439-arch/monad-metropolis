@@ -1,5 +1,5 @@
-export { chitCircleAbi } from "./abi";
-export { ChitCircleClient, erc20Abi } from "./client";
+export { chitCircleAbi } from "./abi.ts";
+export { ChitCircleClient, erc20Abi } from "./client.ts";
 export {
   Mode,
   type Circle,
@@ -9,7 +9,17 @@ export {
   type DiscoveryOptions,
   type MemberStatus,
   type TxResult,
-} from "./types";
+} from "./types.ts";
+export {
+  ANVIL_CHAIN_ID,
+  MONAD_TESTNET_CHAIN_ID,
+  RECEIPT_POLL_MS,
+  clientFor,
+  isComplete,
+  monadTestnet,
+  requireDeployment,
+  type Deployment,
+} from "./config.ts";
 export {
   ChitCircleProvider,
   useChitClient,
@@ -20,16 +30,18 @@ export {
   useJoinCircle,
   useMyCircles,
   usePrimaryAction,
+  useRefreshOnFocus,
   useRoundCountdown,
   useSendToMember,
   useSettleRound,
   useTokenBalance,
   useWithdrawDeposit,
   type CircleAction,
+  type FocusSubscribe,
   type InviteStatus,
   type ReadState,
   type WriteState,
-} from "./hooks";
+} from "./hooks.ts";
 export {
   DEFAULT_INVITE_BASE,
   INVITE_SCHEME,
@@ -39,7 +51,7 @@ export {
   parseInviteLink,
   type InviteLinkOptions,
   type InviteTarget,
-} from "./invite";
+} from "./invite.ts";
 export {
   AUSD_DECIMALS,
   formatAmount,
@@ -48,7 +60,7 @@ export {
   formatUsd,
   parseAmount,
   shortAddress,
-} from "./format";
+} from "./format.ts";
 export {
   deriveBidSecret,
   meraSigner,
@@ -57,4 +69,4 @@ export {
   signInWithPasskey,
   type MeraAccount,
   type MeraSessionLimits,
-} from "./mera";
+} from "./mera.ts";

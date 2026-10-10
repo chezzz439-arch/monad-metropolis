@@ -8,7 +8,8 @@
   "types": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/**/*.test.ts\"",
+    "test": "node --test \"test/*.test.ts\"",
+    "test:e2e": "node --test --test-timeout=180000 \"test/e2e/*.e2e.ts\"",
     "abi": "node scripts/gen-abi.mjs"
   },
   "dependencies": {
@@ -18,6 +19,7 @@
     "react": ">=18"
   },
   "devDependencies": {
+    "@types/node": "^26.6.5",
     "@types/react": "^18.3.0",
     "typescript": "^5.6.0"
   }

@@ -8,9 +8,9 @@ import {
   useState,
 } from "react";
 import type { Address } from "viem";
-import type { ChitCircleClient } from "./client";
-import { checkInviteTarget, parseInviteLink, type InviteTarget } from "./invite";
-import type { CircleView, CreateCircleArgs, DiscoveryOptions, TxResult } from "./types";
+import type { ChitCircleClient } from "./client.ts";
+import { checkInviteTarget, parseInviteLink, type InviteTarget } from "./invite.ts";
+import type { CircleView, CreateCircleArgs, DiscoveryOptions, TxResult } from "./types.ts";
 
 /**
  * The surface the UI consumes. Every hook returns the same shapes:
@@ -240,6 +240,46 @@ export function useMyCircles(
   return { data, loading, error, refresh };
 }
 
+/**
+ * Subscribe to "the app came back to the foreground". Returns an unsubscribe.
+ */
+export type FocusSubscribe = (onFocus: () => void) => () => void;
+
+/**
+ * Re-run a read when the app regains focus. Pair it with {@link useMyCircles},
+ * which does not poll: a user who joins a circle from a link, backgrounds the
+ * app, and comes back should not see a stale list.
+ *
+ * On web the default works with no second argument. React Native has no
+ * `document`, so pass an `AppState` subscriber:
+ *
+ * ```tsx
+ * useRefreshOnFocus(refresh, (onFocus) => {
+ *   const sub = AppState.addEventListener("change", (s) => s === "active" && onFocus());
+ *   return () => sub.remove();
+ * });
+ * ```
+ *
+ * Without that argument on React Native this is a no-op — deliberately silent
+ * rather than importing `react-native` into a layer that also runs in tests.
+ */
+export function useRefreshOnFocus(refresh: () => void, subscribe?: FocusSubscribe): void {
+  const latest = useLatest(refresh);
+
+  useEffect(() => {
+    if (subscribe) return subscribe(() => latest.current());
+
+    const doc = (globalThis as { document?: Document }).document;
+    if (!doc) return;
+
+    const handler = () => {
+      if (doc.visibilityState === "visible") latest.current();
+    };
+    doc.addEventListener("visibilitychange", handler);
+    return () => doc.removeEventListener("visibilitychange", handler);
+  }, [subscribe, latest]);
+}
+
 export type InviteStatus =
   | "idle"
   | "invalid"
@@ -335,20 +375,32 @@ export function useInvite(
 /**
  * Live countdown to the settle deadline, for the round timer. Ticks locally
  * rather than re-reading the chain.
+ *
+ * Takes the circle rather than a deadline so it can anchor on
+ * `secondsUntilSettle`, which the client derived from chain time, and count
+ * down from there. `Date.now()` is used only as an elapsed-time delta, so a
+ * device with a wrong clock still shows the right number. Re-anchors whenever
+ * `useCircle` polls.
  */
-export function useRoundCountdown(roundDeadline: bigint | undefined): number {
-  const [seconds, setSeconds] = useState(0);
+export function useRoundCountdown(
+  circle: Pick<CircleView, "secondsUntilSettle"> | null | undefined,
+): number {
+  const anchor = circle?.secondsUntilSettle;
+  const [seconds, setSeconds] = useState(anchor ?? 0);
 
   useEffect(() => {
-    if (!roundDeadline) {
+    if (anchor === undefined) {
       setSeconds(0);
       return;
     }
-    const compute = () => Math.max(0, Number(roundDeadline) - Math.floor(Date.now() / 1000));
-    setSeconds(compute());
-    const id = setInterval(() => setSeconds(compute()), 1000);
+    setSeconds(anchor);
+    const startedAt = Date.now();
+    const id = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      setSeconds(Math.max(0, anchor - elapsed));
+    }, 1000);
     return () => clearInterval(id);
-  }, [roundDeadline]);
+  }, [anchor]);
 
   return seconds;
 }

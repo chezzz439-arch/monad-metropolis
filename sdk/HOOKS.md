@@ -13,10 +13,20 @@ here, ask rather than reaching for viem directly — it probably belongs in
 ## Setup (done once, by me)
 
 ```tsx
+import { clientFor, monadTestnet, requireDeployment } from "@chitcircle/sdk";
+
+const client = clientFor(requireDeployment(monadTestnet));
+
 <ChitCircleProvider value={client}>
   <App />
 </ChitCircleProvider>
 ```
+
+`monadTestnet` in `src/config.ts` holds the chain id, RPC, contract address,
+AUSD address and **deploy block** in one place. `requireDeployment` throws a
+named error for whatever is still missing rather than handing back a half
+config — right now the two addresses and the deploy block, which land after
+Saturday's deploy. Don't hardcode an address in a screen.
 
 Until Mera is wired, `client` has no signer and every write throws
 `"No signer: sign in with a passkey first."` Reads work fine, so build and style
@@ -48,7 +58,8 @@ interface TxResult { hash: `0x${string}`; settledInSeconds: number }
 | `useMyCircles(me, opts?, pollMs?)` | `CircleView[]` | The home-screen list. Event-log scan — **does not poll by default**, call `refresh` after a create or join. |
 | `useInvite(link, expected?)` | `CircleView` + `status` | Resolves an invite link. See below. |
 | `useTokenBalance(token, account, pollMs?)` | `bigint` | AUSD balance for the header. |
-| `useRoundCountdown(roundDeadline)` | `number` | Seconds left, ticking locally every 1s. Pass `circle.roundDeadline`. |
+| `useRoundCountdown(circle)` | `number` | Seconds left, ticking locally every 1s. Pass the whole `circle`, not the deadline. |
+| `useRefreshOnFocus(refresh, subscribe?)` | — | Re-runs a read when the app returns to the foreground. See below. |
 | `usePrimaryAction(circle)` | `CircleAction` | The one button this screen should show — see below. |
 
 ### `CircleView`
@@ -137,8 +148,25 @@ bug, not yours — tell me instead of special-casing in the screen.
 
 **Home screen.** `useMyCircles(me)` returns every circle this account organized
 or joined. It scans `CircleCreated` and `Joined` logs, so it is slower than a
-plain read — it does **not** poll. Pass its `refresh` as the `onSuccess` of
-`useCreateCircle` / `useJoinCircle`.
+plain read — it does **not** poll. Three things should refresh it:
+
+```tsx
+const { data: circles, loading, refresh } = useMyCircles(me);
+
+// 1. after a create or join
+const create = useCreateCircle();   // pass `refresh` as onSuccess on join/contribute
+// 2. when the app comes back to the foreground
+useRefreshOnFocus(refresh, (onFocus) => {
+  const sub = AppState.addEventListener("change", (s) => s === "active" && onFocus());
+  return () => sub.remove();
+});
+// 3. pull-to-refresh
+<FlatList refreshing={loading} onRefresh={refresh} ... />
+```
+
+The `AppState` argument is required on React Native — the SDK does not import
+`react-native` itself, so without it `useRefreshOnFocus` is a silent no-op.
+A fresh device (the stateless test) does a full scan on first load anyway.
 
 **Sharing a circle.** Build the link, hand it to the share sheet:
 
@@ -153,6 +181,14 @@ buildDeepLink(circleId, { chainId, contract })
 Use the **https** form for WhatsApp — a custom scheme renders as dead text
 there, and §3's whole distribution plan is one link in an existing group chat.
 
+> **The https link does not open the app on its own.** Tapping it opens the
+> browser unless the domain is configured for universal links (iOS) / app links
+> (Android), which we are not doing before Tuesday. The plan is a tiny page at
+> the product URL that tries `chitcircle://circle/<id>?…` and otherwise shows
+> "Open in Chit Circle" plus install steps. Noted in `docs/concept.md` §3.
+> Whoever builds it: test by tapping the link **inside WhatsApp on a real
+> phone**, not a simulator — in-app browsers are where this breaks.
+
 **Opening a link.** `useInvite` parses it, verifies it belongs to this
 deployment, and loads the circle. Switch on `status`, which separates the
 failures that need different copy:
@@ -161,7 +197,7 @@ failures that need different copy:
 |---|---|
 | `idle` | No link yet |
 | `invalid` | "That doesn't look like a Chit Circle invite" |
-| `wrong-deployment` | Link is for another chain or contract — `error.message` says which |
+| `wrong-deployment` | "This invite is from an older version of the app. Ask for a new link." — `error.message` has the chain/contract detail, keep it out of the user's face |
 | `not-found` | Well-formed link, no such circle |
 | `ready` | `data` is the `CircleView`; show the join screen |
 | `error` | Network or RPC failure; `refresh` to retry |
@@ -200,19 +236,25 @@ AUSD_DECIMALS                  // 6
 |---|---|
 | Mera passkey sign-in, signing session, PRF | `src/mera.ts` — stubs, throw on call. SDK shapes unconfirmed as of Oct 9; not guessing them. |
 | Bid mode (`commitBid` / `revealBid`) | Contract reverts `NotImplemented`. Stretch goal — don't build bid UI yet. |
-| AUSD token address | Unconfirmed with Agora. Pass it in; don't hardcode. |
-| Contract address | Not deployed yet. Same. |
+| AUSD token address, contract address, deploy block | Blank in `monadTestnet`. Filled in after Saturday's deploy. |
+| Invite landing page | Not built. Until it exists, an https link opens a browser, not the app. |
 | Roster-wide defaulted badges | `client.getRoster(circleId)` returns `MemberStatus[]` for every member. Not yet wrapped in a hook — ask if you want one. |
 
 ## Running it
 
 ```bash
 cd sdk && npm install
-npm run typecheck   # clean as of this commit
+npm run typecheck   # clean as of this commit (src and test)
 npm test            # 12 passing — invite parsing and money/timer formatting
+npm run test:e2e    # 15 passing — the whole flow on a local anvil chain
 
 cd ../contracts && forge build && cd ../sdk && npm run abi   # after contract changes
 ```
 
-`npm test` covers the pure logic only (link parsing, formatting). Anything that
-touches the chain is unverified until the contract is deployed.
+`npm test` is pure logic and needs nothing installed. `npm run test:e2e` needs
+Foundry: it starts an `anvil`, deploys `ChitCircle` + a 6-decimal `MockUSD` via
+`contracts/script/DeployLocal.s.sol`, and runs create → join → contribute →
+settle → default → member-to-member send through the real client, including the
+log-scan discovery. So the chain-facing code is tested, not just the pure logic.
+If a hook misbehaves, that suite is where I'll reproduce it — tell me the
+sequence of taps.

@@ -1,5 +1,5 @@
 import { getAbiItem, type Address, type Hash, type PublicClient } from "viem";
-import { chitCircleAbi } from "./abi";
+import { chitCircleAbi } from "./abi.ts";
 import {
   Mode,
   type Circle,
@@ -9,7 +9,7 @@ import {
   type DiscoveryOptions,
   type MemberStatus,
   type TxResult,
-} from "./types";
+} from "./types.ts";
 
 const circleCreatedEvent = getAbiItem({ abi: chitCircleAbi, name: "CircleCreated" });
 const joinedEvent = getAbiItem({ abi: chitCircleAbi, name: "Joined" });
@@ -69,17 +69,31 @@ const MAX_UINT256 = (1n << 256n) - 1n;
  * a circle before the user has signed in.
  */
 export class ChitCircleClient {
+  readonly address: Address;
+  readonly publicClient: PublicClient;
+  readonly deployBlock: bigint;
+  private signer: ChitSigner | undefined;
+
   /**
+   * Fields are declared and assigned rather than written as constructor
+   * parameter properties, which Node's type stripping rejects — and the e2e
+   * test runs this file through Node directly.
+   *
    * @param deployBlock Block the contract was deployed in. Discovery scans from
    *        here; without it every lookup walks the chain from genesis, which
    *        most public RPCs will refuse.
    */
   constructor(
-    readonly address: Address,
-    readonly publicClient: PublicClient,
-    private signer?: ChitSigner,
-    readonly deployBlock: bigint = 0n,
-  ) {}
+    address: Address,
+    publicClient: PublicClient,
+    signer?: ChitSigner,
+    deployBlock: bigint = 0n,
+  ) {
+    this.address = address;
+    this.publicClient = publicClient;
+    this.signer = signer;
+    this.deployBlock = deployBlock;
+  }
 
   withSigner(signer: ChitSigner): ChitCircleClient {
     return new ChitCircleClient(this.address, this.publicClient, signer, this.deployBlock);
@@ -141,14 +155,19 @@ export class ChitCircleClient {
    * stitching individual reads in the UI.
    */
   async getCircleView(circleId: bigint, me?: Address): Promise<CircleView> {
-    const [circle, members, payoutOrder, outstanding] = await Promise.all([
+    const [circle, members, payoutOrder, outstanding, block] = await Promise.all([
       this.getCircle(circleId),
       this.getMembers(circleId),
       this.getPayoutOrder(circleId),
       this.outstanding(circleId),
+      this.publicClient.getBlock(),
     ]);
 
-    const now = Math.floor(Date.now() / 1000);
+    // Chain time, not device time. `settleRound` compares against block
+    // timestamps, so a phone with a skewed clock would otherwise show a wrong
+    // countdown and enable the settle button early, producing a revert the user
+    // can do nothing about. One extra parallel read is worth that.
+    const now = Number(block.timestamp);
     const deadline = Number(circle.roundDeadline);
     const settleable = circle.started && !circle.finished && deadline > 0 && now >= deadline;
 
