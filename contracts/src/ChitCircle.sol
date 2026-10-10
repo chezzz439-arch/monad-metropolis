@@ -166,7 +166,6 @@ contract ChitCircle {
         isMember[circleId][msg.sender] = true;
         depositOf[circleId][msg.sender] = c.contribution;
 
-        _pull(c.token, msg.sender, c.contribution);
         emit Joined(circleId, msg.sender, slot, c.contribution);
 
         if (members.length == c.maxMembers) {
@@ -174,6 +173,8 @@ contract ChitCircle {
             c.roundDeadline = uint64(block.timestamp) + c.roundSeconds;
             emit CircleStarted(circleId, c.roundDeadline);
         }
+
+        _pull(c.token, msg.sender, c.contribution);
     }
 
     // ---------------------------------------------------------------------
@@ -192,8 +193,8 @@ contract ChitCircle {
         hasPaid[circleId][c.round][msg.sender] = true;
         c.pot += c.contribution;
 
-        _pull(c.token, msg.sender, c.contribution);
         emit Contributed(circleId, c.round, msg.sender, c.contribution);
+        _pull(c.token, msg.sender, c.contribution);
     }
 
     /// @notice Close the round: seize deposits from anyone who did not pay, send
@@ -239,8 +240,8 @@ contract ChitCircle {
             c.roundDeadline += c.roundSeconds;
         }
 
-        if (amount != 0) _pay(c.token, recipient, amount);
         emit RoundSettled(circleId, round, recipient, amount, shortfall);
+        if (amount != 0) _pay(c.token, recipient, amount);
     }
 
     /// @notice Return a member's deposit after the final round.
@@ -257,8 +258,8 @@ contract ChitCircle {
         depositWithdrawn[circleId][msg.sender] = true;
         depositOf[circleId][msg.sender] = 0;
 
-        _pay(c.token, msg.sender, amount);
         emit DepositWithdrawn(circleId, msg.sender, amount);
+        _pay(c.token, msg.sender, amount);
     }
 
     // ---------------------------------------------------------------------
@@ -310,13 +311,13 @@ contract ChitCircle {
         Circle storage c = _load(circleId);
         address[] storage members = _members[circleId];
 
-        uint256 n;
+        uint256 n = 0;
         for (uint256 i = 0; i < members.length; ++i) {
             if (!hasPaid[circleId][c.round][members[i]]) ++n;
         }
 
         address[] memory owed = new address[](n);
-        uint256 j;
+        uint256 j = 0;
         for (uint256 i = 0; i < members.length; ++i) {
             if (!hasPaid[circleId][c.round][members[i]]) owed[j++] = members[i];
         }
