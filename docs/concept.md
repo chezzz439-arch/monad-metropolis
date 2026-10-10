@@ -177,10 +177,14 @@ Rules reminder: sponsor bounties are judged **40% on following the published req
 
 | Branch | Owner | Builds |
 |---|---|---|
-| `kaushik` | Kaushik | Mera integration: passkey onboarding, signing session + limits, stateless flow, PRF bid secrets |
-| `sohan` | Sohan | `ChitCircle.sol` + Foundry tests, Monad testnet deploy, AUSD wiring, contract addresses in README |
-| `aadit` | Aadit | React Native app: circle screens, pay/settle, send/receive, timer, defaulted badges, local-currency display |
-| `rohan` | Rohan | User tests with 5+ circle members, pitch video (≤2 min), demo video (≤3 min), logo, README (AI-tool disclosure, license, architecture), submission form |
+| `kaushik` | Kaushik (lead, backend) | **Smart contract:** `ChitCircle.sol` + Foundry tests, Monad testnet deploy, AUSD wiring, contract addresses + tx hashes for the README. **Mera:** passkey onboarding, signing session + limits, stateless flow, PRF bid secrets (stretch). **Integration:** the app's data/transaction layer (hooks the UI calls for create/join/pay/settle/send/bid), so the others only build screens on top |
+| `sohan` | Sohan | Send/receive screen + settled-in timer · Demo video (≤3 min) · Pitch video (≤2 min) |
+| `aadit` | Aadit | Circle screens UI: create / join / pay / settle · Defaulted badges, local-currency display, UI polish · README: setup, license, AI-tool disclosure, architecture, external code list |
+| `rohan` | Rohan | User tests with 5+ real circle members (record quotes) · Logo + optional 30-sec product ad · Submission form + selecting track and bounties on the hackathon site |
+
+The split for Sohan, Aadit and Rohan was randomized. Swap tasks among yourselves if skills fit better.
+
+**Hand-off that unblocks everyone:** Kaushik publishes the hook names and what each returns by **Sat Oct 10, midday**. Until then, Sohan and Aadit build screens against mock data with the same shape.
 
 Merge into `main` through pull requests. Freeze `main` at **Oct 13, 12 PM ET**.
 
@@ -188,7 +192,7 @@ Merge into `main` through pull requests. Freeze `main` at **Oct 13, 12 PM ET**.
 
 | Day | Goals |
 |---|---|
-| **Fri Oct 9 (tonight)** | Confirm the testnet AUSD source with Agora (Discord). Kaushik: passkey login working on a real phone. Sohan: contract skeleton |
+| **Fri Oct 9 (tonight)** | Confirm the testnet AUSD source with Agora (Discord). Kaushik: passkey login working on a real phone + contract skeleton. Sohan/Aadit: screen layouts on mock data. Rohan: line up testers |
 | **Sat Oct 10** | Contract deployed with tests. App: create/join/pay against testnet |
 | **Sun Oct 11** | Full fixed-order flow working end to end, including deposit taken on a missed payment. Member-to-member send. Start bid mode only if all of this works |
 | **Mon Oct 12** | User tests (record quotes), polish, record videos, write README |
