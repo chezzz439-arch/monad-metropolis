@@ -14,10 +14,11 @@ cp .env.example .env
 npm start
 ```
 
-`npm start` opens a tunnel for a custom Expo development client. Mera passkeys
-use native modules and do not run in Expo Go. `npm run start:go` is only for the
-UI preview; passkey actions will be unavailable there. `npm run web` starts the
-separate browser build.
+`npm start` opens an Expo Go-compatible tunnel and prints an `exp://` QR code.
+Scan it inside Expo Go. Mera passkeys use native modules and do not run in Expo
+Go; for those, install a custom development build and run `npm run start:dev`,
+which prints a development-client QR instead. `npm run web` starts the separate
+browser build.
 
 To inspect live Monad testnet circles, fill in the deployed ChitCircle address
 and deployment block in `.env`, then restart Expo. Agora's official deployment
