@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import { createSecp256k1SigningSession, getEvmAddress } from "@category-labs/mera";
+import { hexToBytes } from "viem";
 import { ChitCircleClient } from "../../src/client.ts";
 import { buildInviteLink, checkInviteTarget, parseInviteLink } from "../../src/invite.ts";
+import { meraSigner, type MeraAccount } from "../../src/mera.ts";
 import { Mode } from "../../src/types.ts";
-import { CHAIN_ID, startHarness, warp, type Harness } from "./harness.ts";
+import { ACCOUNTS, anvilChain, CHAIN_ID, RPC_URL, startHarness, warp, type Harness } from "./harness.ts";
 
 /**
  * The whole chain-facing surface of the SDK, against a real chain.
@@ -248,5 +251,41 @@ describe("ChitCircle end to end on anvil", () => {
 
   it("still reverts bid mode, as documented", async () => {
     await assert.rejects(() => h.client(0).commitBid(0n, `0x${"11".repeat(32)}`));
+  });
+
+  it("uses a Mera signing session for a scoped prompt-free contribution", async () => {
+    const circleId = await h.client(0).nextCircleId();
+    await h.client(0).createCircle({
+      token: h.token,
+      contribution: CONTRIBUTION,
+      maxMembers: 2,
+      roundSeconds: ROUND_SECONDS,
+    });
+    await h.client(0).join(circleId);
+    await h.client(1).join(circleId);
+
+    const session = createSecp256k1SigningSession({ privateKey: hexToBytes(ACCOUNTS[0]) });
+    const meraAccount: MeraAccount = {
+      address: getEvmAddress(session.publicKey),
+      credentialId: "local-anvil-fixture",
+      rpId: "accounts.example",
+      limits: {
+        contract: h.chitCircle,
+        maxAmountPerTx: CONTRIBUTION,
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+      session,
+    };
+    const signerClient = new ChitCircleClient(
+      h.chitCircle,
+      h.publicClient,
+      meraSigner(meraAccount, RPC_URL, anvilChain),
+      h.deployBlock,
+    );
+
+    const result = await signerClient.contribute(circleId);
+    assert.match(result.hash, /^0x[0-9a-f]{64}$/);
+    assert.equal(await h.client(0).getMemberStatus(circleId, h.addr(0)).then((status) => status.paidThisRound), true);
+    session.end();
   });
 });

@@ -109,6 +109,7 @@ export interface ChitSigner {
     abi: readonly unknown[];
     functionName: string;
     args: readonly unknown[];
+    noPromptAmount?: bigint;
   }): Promise<Hash>;
   /** Plain ERC20 transfer — the member-to-member send. */
   transferToken(args: { token: Address; to: Address; amount: bigint }): Promise<Hash>;

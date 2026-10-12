@@ -49,15 +49,15 @@ export function ActivityList({ transactions }: ActivityListProps) {
 
 const styles = StyleSheet.create({
   container: { marginTop: 20, paddingHorizontal: 15, flex: 1 },
-  header: { fontSize: 18, fontWeight: "bold", marginBottom: 15, color: "#111" },
-  itemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#f3f4f6" },
-  iconContainer: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#f0fdf4", justifyContent: "center", alignItems: "center", marginRight: 12 },
-  iconText: { fontSize: 16, fontWeight: "bold", color: "#10b981" },
+  header: { fontSize: 18, fontWeight: "bold", marginBottom: 15, color: "#182821" },
+  itemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#dce4dd" },
+  iconContainer: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#e8eee7", justifyContent: "center", alignItems: "center", marginRight: 12 },
+  iconText: { fontSize: 16, fontWeight: "bold", color: "#32745b" },
   details: { flex: 1 },
-  description: { fontSize: 15, fontWeight: "500", color: "#1f2937" },
-  timestamp: { fontSize: 12, color: "#9ca3af", marginTop: 2 },
+  description: { fontSize: 15, fontWeight: "500", color: "#182821" },
+  timestamp: { fontSize: 12, color: "#6d7b72", marginTop: 2 },
   amount: { fontSize: 15, fontWeight: "bold" },
-  positive: { color: "#10b981" },
-  neutral: { color: "#1f2937" },
-  emptyText: { color: "#9ca3af", textAlign: "center", marginTop: 20 }
+  positive: { color: "#32745b" },
+  neutral: { color: "#182821" },
+  emptyText: { color: "#6d7b72", textAlign: "center", marginTop: 20 }
 });

@@ -22,15 +22,17 @@ const client = clientFor(requireDeployment(monadTestnet));
 </ChitCircleProvider>
 ```
 
-`monadTestnet` in `src/config.ts` holds the chain id, RPC, contract address,
-AUSD address and **deploy block** in one place. `requireDeployment` throws a
-named error for whatever is still missing rather than handing back a half
-config — right now the two addresses and the deploy block, which land after
-Saturday's deploy. Don't hardcode an address in a screen.
+`monadTestnet` in `src/config.ts` holds the chain id, RPC, and official Monad
+testnet AUSD address. The ChitCircle address and **deploy block** are supplied
+after deployment. `requireDeployment` throws a named error for whatever is
+still missing rather than handing back a half config. Don't hardcode addresses
+in a screen.
 
-Until Mera is wired, `client` has no signer and every write throws
-`"No signer: sign in with a passkey first."` Reads work fine, so build and style
-screens against real chain data now.
+Pass `meraSigner(account, rpcUrl)` to `clientFor` after passkey sign-in to enable
+writes. The Mera session's contract/amount/expiry checks for prompt-free
+contributions are enforced by app code, not by the signing key itself. The
+native Mera adapter requires a custom development build; it does not run in
+Expo Go.
 
 ## Every hook returns one of two shapes
 
@@ -234,9 +236,9 @@ AUSD_DECIMALS                  // 6
 
 | Thing | State |
 |---|---|
-| Mera passkey sign-in, signing session, PRF | `src/mera.ts` — stubs, throw on call. SDK shapes unconfirmed as of Oct 9; not guessing them. |
+| Native Mera use | Implemented in `src/mera.ts`; requires an HTTPS relying-party host and native association files before ceremonies work. |
 | Bid mode (`commitBid` / `revealBid`) | Contract reverts `NotImplemented`. Stretch goal — don't build bid UI yet. |
-| AUSD token address, contract address, deploy block | Blank in `monadTestnet`. Filled in after Saturday's deploy. |
+| ChitCircle address and deploy block | Fill in after the Monad testnet deployment. Official AUSD address is configured. |
 | Invite landing page | Not built. Until it exists, an https link opens a browser, not the app. |
 | Roster-wide defaulted badges | `client.getRoster(circleId)` returns `MemberStatus[]` for every member. Not yet wrapped in a hook — ask if you want one. |
 

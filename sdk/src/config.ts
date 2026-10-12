@@ -4,6 +4,8 @@ import type { ChitSigner } from "./types.ts";
 
 export const MONAD_TESTNET_CHAIN_ID = 10143;
 export const ANVIL_CHAIN_ID = 31337;
+export const MONAD_TESTNET_AUSD_ADDRESS: Address = "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC";
+export const MONAD_TESTNET_AUSD_FAUCET_ADDRESS: Address = "0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C";
 
 /**
  * One deployed instance of the app. Everything chain-specific lives here, so
@@ -29,14 +31,13 @@ export interface Deployment {
 }
 
 /**
- * Monad testnet. Addresses are blank until Saturday's deploy — `requireDeployment`
- * will say so rather than letting a zero address fail somewhere confusing.
- *
- * TODO(kaushik): fill in after deploying; AUSD address still unconfirmed with Agora.
+ * ChitCircle and its deploy block are populated after deployment. AUSD is the
+ * official Monad testnet token published in Agora's deployment table.
  */
 export const monadTestnet: Partial<Deployment> & Pick<Deployment, "chainId" | "rpcUrl"> = {
   chainId: MONAD_TESTNET_CHAIN_ID,
   rpcUrl: "https://testnet-rpc.monad.xyz",
+  token: MONAD_TESTNET_AUSD_ADDRESS,
   inviteBaseUrl: "https://chitcircle.app",
 };
 

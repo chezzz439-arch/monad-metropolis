@@ -12,6 +12,8 @@ export {
 } from "./types.ts";
 export {
   ANVIL_CHAIN_ID,
+  MONAD_TESTNET_AUSD_ADDRESS,
+  MONAD_TESTNET_AUSD_FAUCET_ADDRESS,
   MONAD_TESTNET_CHAIN_ID,
   RECEIPT_POLL_MS,
   clientFor,
@@ -62,11 +64,15 @@ export {
   shortAddress,
 } from "./format.ts";
 export {
+  createPasskeyAccount,
+  describeMeraError,
   deriveBidSecret,
+  endMeraSession,
   meraSigner,
   openSigningSession,
   sessionGuard,
   signInWithPasskey,
   type MeraAccount,
   type MeraSessionLimits,
+  type PasskeyAccountOptions,
 } from "./mera.ts";

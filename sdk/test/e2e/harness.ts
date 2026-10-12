@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createPublicClient, createWalletClient, defineChain, http, type Address, type Hash, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { ChitCircleClient, erc20Abi } from "../../src/client.ts";
@@ -10,6 +11,8 @@ import type { ChitSigner } from "../../src/types.ts";
 export const RPC_PORT = 8599;
 export const RPC_URL = `http://127.0.0.1:${RPC_PORT}`;
 export const CHAIN_ID = 31337;
+
+const require = createRequire(import.meta.url);
 
 export const anvilChain = defineChain({
   id: CHAIN_ID,
@@ -30,8 +33,19 @@ export const ACCOUNTS = [
   "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
 ] as const;
 
-/** Foundry installs to ~/.foundry/bin, which is not on a non-interactive PATH. */
+/** Prefer a directly killable Foundry binary, then a system installation. */
 function foundryBin(name: string): string {
+  if (name === "anvil") {
+    const arch = process.arch === "x64" ? "amd64" : process.arch;
+    try {
+      const packageJson = require.resolve(`@foundry-rs/${name}-${process.platform}-${arch}/package.json`);
+      const binary = join(dirname(packageJson), "bin", name);
+      if (existsSync(binary)) return binary;
+    } catch {
+      // The platform-specific npm binary is optional; use the system install below.
+    }
+  }
+
   const local = join(homedir(), ".foundry", "bin", name);
   return existsSync(local) ? local : name;
 }
@@ -193,7 +207,7 @@ function runForgeScript(): Promise<string> {
       foundryBin("forge"),
       [
         "script",
-        "script/DeployLocal.s.sol",
+        "script/DeployLocal.s.sol:DeployLocal",
         "--rpc-url",
         RPC_URL,
         "--broadcast",

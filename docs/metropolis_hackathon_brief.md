@@ -358,6 +358,6 @@ Rules 5.1 (verbatim):
 | Mera docs | Found: https://mera.category.xyz/getting-started/ (plus /reference/, /concepts/passkeys-and-prf/, /concepts/secret-vaults/, /recipes/use-mera-with-react-native/, /recipes/use-mera-with-chrome-extensions/, /recipes/use-an-existing-secret/) | Mera bounty pages |
 | Mera GitHub | Found: https://github.com/category-labs/mera | Best Mera-Powered UX bounty page |
 | "MERA" entry on Resources page | https://docs.monad.xyz/guides/mera, described as "Monad execution and runtime architecture guide." **[Note]** That description doesn't match the passkey-account Mera from the bounties. I haven't opened the link. | https://hackathon.monad.xyz/resources |
-| Agora AUSD testnet faucet | **Not found** | — |
-| AUSD testnet contract address on Monad | **Not found** on the hackathon site. The Agora bounty links to https://docs.agora.finance/contract-overview, which may list it. I haven't opened that page. | Agora bounty page |
+| Agora AUSD testnet faucet | Found: `0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C` on Monad testnet | [Agora contract deployments](https://docs.agora.finance/developer/contract-deployments) |
+| AUSD testnet contract address on Monad | Found: `0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC` | [Agora contract deployments](https://docs.agora.finance/developer/contract-deployments) |
 | Testnet MON faucet (not AUSD) | https://faucet.monad.xyz/ | Dashboard, Mera UX bounty page |
