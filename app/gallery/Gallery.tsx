@@ -201,6 +201,25 @@ const SCREENS: Record<string, () => React.ReactElement> = {
     </Shell>
   ),
 
+  /**
+   * A link that arrived too late: the circle filled up and started without
+   * them. The same scenario as `detail-settle`, read by someone with no stake
+   * in it — who must not be offered the settle button sitting one state away.
+   */
+  "detail-closed": () => (
+    <Shell scenario="settleable" title="Circle #0" onBack>
+      {() => (
+        <LiveCircleDetailScreen
+          circleId={0n}
+          account={STRANGER}
+          canWrite
+          deployment={monadTestnet}
+          onBack={() => {}}
+        />
+      )}
+    </Shell>
+  ),
+
   missed: () => (
     <Shell scenario="defaulted" title="Sunday Table" onBack>
       {() => (

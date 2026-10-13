@@ -24,7 +24,8 @@ visit, so the gallery costs the real app nothing.
 `02` → `04` → `09` is what someone who taps a shared link actually walks
 through: they land already invited, set up an account, and come back to the
 circle with one button on it. `08` is the other side of the same link — where
-the organizer lands the moment they finish creating.
+the organizer lands the moment they finish creating. `20` is the same link
+followed too late, after the circle filled up.
 
 | File | `?screen=` | What it shows |
 |---|---|---|
@@ -47,3 +48,4 @@ the organizer lands the moment they finish creating.
 | `17-error-passkey.png` | `welcome-error` | A cancelled confirmation |
 | `18-error-bad-link.png` | `welcome-bad-link` | An invite link that arrived truncated |
 | `19-setup-failed.png` | `setup-failed` | Account setup did not finish |
+| `20-circle-closed.png` | `detail-closed` | A link that arrived too late — the circle is full, so there is nothing to offer |
