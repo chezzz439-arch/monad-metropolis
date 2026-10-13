@@ -20,10 +20,14 @@ import {
 export const DEFAULT_MAX_CIRCLES = 256;
 
 /**
- * Membership probes in flight at once. Enough that 256 ids resolve in a few
- * round-trips, few enough that a public RPC does not rate-limit us mid-demo.
+ * Membership probes in flight at once.
+ *
+ * The transport paces itself under the RPC's 15-calls-a-second ceiling, so
+ * this no longer decides whether we get rate-limited — it decides how long a
+ * queue discovery hands the pacer. Sixteen was enough to monopolise the whole
+ * budget for a second and leave a screen mounting behind it waiting.
  */
-const PROBE_CONCURRENCY = 16;
+const PROBE_CONCURRENCY = 8;
 
 /**
  * Run `fn` over `items`, at most `size` at a time.

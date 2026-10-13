@@ -1,4 +1,4 @@
-import { createPublicClient, http, type Address, type PublicClient } from "viem";
+import { createPublicClient, http, type Address, type PublicClient, type Transport } from "viem";
 import { ChitCircleClient } from "./client.ts";
 import type { ChitSigner } from "./types.ts";
 
@@ -109,25 +109,88 @@ export function requireDeployment(d: Partial<Deployment>, label = "deployment"):
  */
 export const RECEIPT_POLL_MS = 250;
 
+/**
+ * Calls a second the public RPC allows, minus a margin.
+ *
+ * The ceiling is 15; this leaves room for the wallet client, which has its own
+ * transport and is not paced by this one.
+ */
+export const RPC_CALLS_PER_SECOND = 12;
+
+/**
+ * Hold a transport under a calls-per-second ceiling.
+ *
+ * A sliding window rather than a fixed one: a fixed window lets a burst at the
+ * end of one second and another at the start of the next sail through at twice
+ * the rate, which is exactly the shape of traffic here — a screen mounting
+ * fires everything it needs at once.
+ *
+ * Queued rather than dropped. Every call this app makes is one some screen is
+ * waiting on, so refusing is never better than arriving a few hundred
+ * milliseconds later.
+ */
+export function paced(inner: Transport, callsPerSecond: number): Transport {
+  const sent: number[] = [];
+  let chain: Promise<unknown> = Promise.resolve();
+
+  const slot = async (): Promise<void> => {
+    for (;;) {
+      const now = Date.now();
+      while (sent.length > 0 && now - sent[0]! >= 1000) sent.shift();
+      if (sent.length < callsPerSecond) {
+        sent.push(now);
+        return;
+      }
+      // Wait exactly until the oldest call leaves the window.
+      await new Promise((r) => setTimeout(r, 1000 - (now - sent[0]!) + 5));
+    }
+  };
+
+  return ((opts: Parameters<Transport>[0]) => {
+    const transport = inner(opts);
+    const inner_ = transport.request as (args: unknown, reqOpts?: unknown) => Promise<unknown>;
+    // Serialised through one chain so concurrent callers take slots in order;
+    // without it they all read the same window and all decide to proceed.
+    const request = (args: unknown, reqOpts?: unknown) => {
+      const next = chain.then(slot).then(() => inner_(args, reqOpts));
+      // The chain must never carry a rejection forward, or one refused call
+      // wedges every later one behind it.
+      chain = next.catch(() => {});
+      return next;
+    };
+    return { ...transport, request: request as typeof transport.request };
+  }) as Transport;
+}
+
 /** The one call an app needs at startup. */
 export function clientFor(deployment: Deployment, signer?: ChitSigner): ChitCircleClient {
   const publicClient = createPublicClient({
     /**
-     * Batched and retried, because the public RPC limits by request count.
+     * Paced, batched and retried, because the public RPC limits by call rate.
      *
-     * One circle screen is ~23 reads per poll — the view, the roster, and a
-     * status per member — and discovery adds an `isMember` per circle. Sent one
-     * at a time that earned a burst of HTTP 429s on the deployed site, which
-     * reached the user as "Something went wrong" while the join had actually
-     * worked. Monad's RPC accepts JSON-RPC batches, so reads this code already
-     * issues in parallel leave as a few requests instead of two dozen, and the
-     * retry covers whatever still bounces.
+     * THE LIMIT IS 15 CALLS A SECOND, enforced per JSON-RPC call rather than
+     * per HTTP request — so batching does not buy headroom, because a batch of
+     * twenty is twenty calls. Worse, the refusal arrives as HTTP 200 carrying
+     * `{"error":{"code":-32011,"message":"requests limited to 15/sec"}}`, so
+     * nothing logs it as a failure and it surfaces only as a broken screen.
+     *
+     * Found by dumping response bodies after a brand-new account's home screen
+     * said "Something went wrong" with no console error and no failed request
+     * anywhere in devtools.
+     *
+     * {@link paced} is the load-bearing part: it holds the whole app under the
+     * ceiling however many reads a screen asks for at once. Batching and
+     * retries stay because they are still worth having, but neither was ever
+     * the fix.
      */
-    transport: http(deployment.rpcUrl, {
-      batch: { wait: 16 },
-      retryCount: 4,
-      retryDelay: 300,
-    }),
+    transport: paced(
+      http(deployment.rpcUrl, {
+        batch: { wait: 16 },
+        retryCount: 4,
+        retryDelay: 300,
+      }),
+      RPC_CALLS_PER_SECOND,
+    ),
     pollingInterval: RECEIPT_POLL_MS,
   }) as PublicClient;
   return new ChitCircleClient(
