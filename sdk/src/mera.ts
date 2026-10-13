@@ -6,6 +6,7 @@ import {
   isMeraError,
   type PasskeyCredentialMetadata,
   type Secp256k1SigningSession,
+  type WebAuthnClient,
 } from "@category-labs/mera";
 import { toViemAccount } from "@category-labs/mera/viem";
 import {
@@ -67,6 +68,26 @@ export interface PasskeyAppIdentity {
   rpId: string;
   /** Name the authenticator may display. */
   rpName?: string;
+  /**
+   * Who runs the WebAuthn ceremony. Omit on web and Mera uses
+   * `navigator.credentials`.
+   *
+   * On React Native there is no `navigator.credentials`, so every call here
+   * fails with `PASSKEY_OPERATION_FAILED` until this is supplied:
+   *
+   * ```ts
+   * import { reactNativeWebAuthnClient } from "@category-labs/mera/react-native-webauthn-client";
+   * const app = { rpId: "chitcircle.app", webAuthnClient: reactNativeWebAuthnClient };
+   * ```
+   *
+   * It is a const, not a factory — do not call it. Importing that module pulls
+   * in React Native, so a web build must never import it; that is why this is a
+   * parameter here rather than an import in this file.
+   *
+   * Kept as config so the React-Native-versus-PWA decision is one object
+   * literal, not an edit to this file.
+   */
+  webAuthnClient?: WebAuthnClient;
 }
 
 export interface MeraSessionLimits {
@@ -114,6 +135,7 @@ export async function createAccountWithPasskey(
   const created = await createPasskeyWithPrfOutput({
     rp: { id: app.rpId, name: app.rpName ?? DEFAULT_LABEL },
     user: { name: label, displayName: label },
+    webAuthnClient: app.webAuthnClient,
   });
   return accountFromPrf(created.prfOutput, {
     credentialId: created.credentialId,
@@ -134,7 +156,7 @@ export async function signInWithPasskey(
   app: PasskeyAppIdentity,
   credential?: PasskeyCredentialMetadata,
 ): Promise<MeraAccount> {
-  const got = await getPasskeyPrfOutput({ rpId: app.rpId, credential });
+  const got = await getPasskeyPrfOutput({ rpId: app.rpId, credential, webAuthnClient: app.webAuthnClient });
   return accountFromPrf(got.prfOutput, { credentialId: got.credentialId });
 }
 
@@ -210,7 +232,11 @@ export async function requireFreshPasskey(
   app: PasskeyAppIdentity,
   account: MeraAccount,
 ): Promise<boolean> {
-  const got = await getPasskeyPrfOutput({ rpId: app.rpId, credential: account.credential });
+  const got = await getPasskeyPrfOutput({
+    rpId: app.rpId,
+    credential: account.credential,
+    webAuthnClient: app.webAuthnClient,
+  });
   const probe = createSecp256k1SigningSession({ privateKey: got.prfOutput });
   got.prfOutput.fill(0);
   try {
@@ -247,7 +273,11 @@ export async function deriveBidSecret(
   circleId: bigint,
   round: number,
 ): Promise<`0x${string}`> {
-  const got = await getPasskeyPrfOutput({ rpId: app.rpId, prfSalt: bidSalt(circleId, round) });
+  const got = await getPasskeyPrfOutput({
+    rpId: app.rpId,
+    prfSalt: bidSalt(circleId, round),
+    webAuthnClient: app.webAuthnClient,
+  });
   const secret = bytesToHex(got.prfOutput);
   got.prfOutput.fill(0);
   return secret;
