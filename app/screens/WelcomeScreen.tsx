@@ -64,10 +64,18 @@ export function WelcomeScreen({
 
         <View style={styles.actions}>
           {error ? <ErrorNote message={error} /> : null}
+          {/*
+            Starting a new account leads even for someone this device has seen
+            before. A returning user knows they have an account and will find
+            "Sign in" wherever it sits; a new one handed a device mid-demo does
+            not, and would tap the loud button and land in somebody else's
+            account. The cost of guessing wrong is asymmetric, so the
+            destructive-by-surprise path is the quiet one.
+          */}
           {returning ? (
             <>
-              <Button label="Sign in" onPress={onSignIn} loading={busy} />
-              <Button label="Start a new account" variant="ghost" onPress={onGetStarted} disabled={busy} />
+              <Button label="Start a new account" onPress={onGetStarted} loading={busy} />
+              <Button label="Sign in" variant="ghost" onPress={onSignIn} disabled={busy} />
             </>
           ) : (
             <>

@@ -116,6 +116,26 @@ const SCREENS: Record<string, () => React.ReactElement> = {
 
   "setup-failed": () => <SettingUpScreen failed onRetry={() => {}} onContinue={() => {}} />,
 
+  /** Funding worked: the account has gas and money, and is told the amount. */
+  "setup-funded": () => (
+    <SettingUpScreen
+      failed={false}
+      ready={{ kind: "granted", sent: 500_000_000n, balance: 500_000_000n, hash: "0x0" }}
+      onRetry={() => {}}
+      onContinue={() => {}}
+    />
+  ),
+
+  /** The dripper ran out mid-demo. A sentence someone can act on, not an error. */
+  "setup-dry": () => (
+    <SettingUpScreen
+      failed={false}
+      ready={{ kind: "funder-empty", balance: 0n }}
+      onRetry={() => {}}
+      onContinue={() => {}}
+    />
+  ),
+
   home: () => (
     <Shell scenario="midRound">
       {() => (
@@ -174,7 +194,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
 
   /** The same circle seen by someone who has not joined it yet. */
   "detail-join": () => (
-    <Shell scenario="filling" title="Circle #0" onBack>
+    <Shell scenario="filling" title="Circle #1" onBack>
       {() => (
         <LiveCircleDetailScreen
           circleId={0n}
@@ -207,7 +227,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
    * in it — who must not be offered the settle button sitting one state away.
    */
   "detail-closed": () => (
-    <Shell scenario="settleable" title="Circle #0" onBack>
+    <Shell scenario="settleable" title="Circle #1" onBack>
       {() => (
         <LiveCircleDetailScreen
           circleId={0n}

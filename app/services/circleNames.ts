@@ -73,7 +73,15 @@ export function rememberedCircleIds(names: Record<string, string>): bigint[] {
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
-/** The name the group gave it, or a plain one anybody can repeat out loud. */
+/**
+ * The name the group gave it, or a plain one anybody can repeat out loud.
+ *
+ * The number shown is the id plus one. Circle ids start at zero because that
+ * is where an array starts, which is a fact about our storage and not one the
+ * first person to ever create a circle should be told — "Circle #0" reads like
+ * a bug or an empty state. Display only: {@link circleNames} keys, invite
+ * links and every contract call still use the real id.
+ */
 export function circleName(circleId: bigint, names: Record<string, string>): string {
-  return names[circleId.toString()]?.trim() || `Circle #${circleId.toString()}`;
+  return names[circleId.toString()]?.trim() || `Circle #${(circleId + 1n).toString()}`;
 }
