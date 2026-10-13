@@ -28,6 +28,9 @@ import { color, radius, space, tap, type } from "../design/tokens";
 import { friendlyError, money, personName, timeLeft } from "../design/copy";
 import { shareInviteLink, type ShareOutcome } from "../services/shareInvite";
 
+/** How long to wait before trying a failed roster read again. */
+const ROSTER_RETRY_MS = 4000;
+
 export function LiveCircleDetailScreen({
   circleId,
   account,
@@ -49,6 +52,7 @@ export function LiveCircleDetailScreen({
   const withdraw = useWithdrawDeposit(refresh);
   const [roster, setRoster] = useState<Awaited<ReturnType<typeof client.getRoster>>>([]);
   const [rosterError, setRosterError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
   const [celebration, setCelebration] = useState<Celebration | null>(null);
   const [shared, setShared] = useState<ShareOutcome | null>(null);
   const seconds = useRoundCountdown(circle);
@@ -56,18 +60,34 @@ export function LiveCircleDetailScreen({
   const pending = join.pending || contribute.pending || settle.pending || withdraw.pending;
   const actionError = join.error ?? contribute.error ?? settle.error ?? withdraw.error;
 
+  /**
+   * The roster, refetched when the round or the membership moves.
+   *
+   * `retry` is in the dependencies because without it a single failure was
+   * permanent: nothing else here changes on its own, so one unlucky read — a
+   * busy RPC during the burst around a join — pinned "Something went wrong"
+   * under a circle that was working perfectly, and polling never cleared it.
+   * Caught on the deployed site, where the join succeeded and the error stayed.
+   */
   useEffect(() => {
     let active = true;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
     client.getRoster(circleId).then((members) => {
-      if (active) {
-        setRoster(members);
-        setRosterError(null);
-      }
+      if (!active) return;
+      setRoster(members);
+      setRosterError(null);
     }).catch((cause: unknown) => {
-      if (active) setRosterError(friendlyError(cause));
+      if (!active) return;
+      setRosterError(friendlyError(cause));
+      retryTimer = setTimeout(() => active && setRetry((n) => n + 1), ROSTER_RETRY_MS);
     });
-    return () => { active = false; };
-  }, [client, circleId, circle?.round, circle?.members.length]);
+
+    return () => {
+      active = false;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [client, circleId, circle?.round, circle?.members.length, retry]);
 
   const nameOf = (who: Address) => {
     const slot = circle?.members.findIndex((m) => m.toLowerCase() === who.toLowerCase()) ?? -1;
