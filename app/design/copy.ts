@@ -81,6 +81,11 @@ const REVERTS: Record<string, string> = {
 const PATTERNS: [RegExp, string][] = [
   [/insufficient|exceeds balance|exceeds allowance/i, "You do not have enough in your balance for this."],
   [/rejected|denied|cancell?ed|NotAllowedError|AbortError/i, "That confirmation was cancelled. Tap again to continue."],
+  // Before the generic network line: a 429 is a busy network, not a missing one,
+  // and "check your connection" sends people to fix a router that is fine.
+  // Seen for real on the deployed site, where a burst of 429s on the reads
+  // behind a join put a failure on screen over a payment that had worked.
+  [/\b429\b|rate.?limit|too many requests/i, "The network is busy. Give it a few seconds and try again."],
   [/fetch|network|timeout|timed out|ECONN|ETIMEDOUT|socket|HTTP request failed/i, "We could not reach the network just now. Check your connection and try again."],
   [/nonce|replacement|already known|underpriced/i, "That did not go through. Give it a moment and try again."],
 ];

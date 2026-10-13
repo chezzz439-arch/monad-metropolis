@@ -112,7 +112,22 @@ export const RECEIPT_POLL_MS = 250;
 /** The one call an app needs at startup. */
 export function clientFor(deployment: Deployment, signer?: ChitSigner): ChitCircleClient {
   const publicClient = createPublicClient({
-    transport: http(deployment.rpcUrl),
+    /**
+     * Batched and retried, because the public RPC limits by request count.
+     *
+     * One circle screen is ~23 reads per poll — the view, the roster, and a
+     * status per member — and discovery adds an `isMember` per circle. Sent one
+     * at a time that earned a burst of HTTP 429s on the deployed site, which
+     * reached the user as "Something went wrong" while the join had actually
+     * worked. Monad's RPC accepts JSON-RPC batches, so reads this code already
+     * issues in parallel leave as a few requests instead of two dozen, and the
+     * retry covers whatever still bounces.
+     */
+    transport: http(deployment.rpcUrl, {
+      batch: { wait: 16 },
+      retryCount: 4,
+      retryDelay: 300,
+    }),
     pollingInterval: RECEIPT_POLL_MS,
   }) as PublicClient;
   return new ChitCircleClient(
