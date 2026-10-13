@@ -552,11 +552,22 @@ const everyone = MOCK_PEOPLE.map((p) => p.address);
 function seed(world: MockWorld, scenario: ScenarioName): void {
   if (scenario === "empty") return;
 
+  /*
+   * Priya is the one who misses, and the default order would have handed her
+   * the pot in the very next round: the screen then said "Priya missed" six
+   * lines above "Priya gets the pot this round", which reads as a bug in the
+   * demo rather than the feature it is meant to show. Putting her last keeps
+   * the story legible — she missed, her deposit covered it, and she collects
+   * at the end like everyone else.
+   */
+  const payoutOrder = scenario === "defaulted" ? [0, 2, 3, 4, 1] : undefined;
+
   const id = world.createCircle(everyone[1]!, {
     token: MOCK_TOKEN,
     contribution: MOCK_CONTRIBUTION,
     maxMembers: 5,
     roundSeconds: MOCK_ROUND_SECONDS,
+    ...(payoutOrder ? { payoutOrder } : {}),
   });
 
   if (scenario === "filling") {

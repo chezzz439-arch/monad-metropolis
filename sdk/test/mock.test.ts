@@ -121,6 +121,27 @@ test("defaulted: the missed payment is covered by the deposit, pot stays whole",
   );
 });
 
+test("defaulted: the person who missed is not the one collecting the pot", async () => {
+  // This is a demo-legibility guard, not a contract rule. With the natural
+  // payout order the member who misses round 1 is also the recipient of round
+  // 2, so the screen read "Last round, Priya missed" directly above "Priya
+  // gets the pot this round" — which looks like a bug in the demo and buries
+  // the one thing it exists to show.
+  const c = mockClient({ scenario: "defaulted", ...fast });
+  const view = await c.getCircleView(0n, priya);
+
+  assert.ok(view.recipient, "a settled circle has a recipient for the new round");
+  assert.notEqual(
+    view.recipient!.toLowerCase(),
+    priya.toLowerCase(),
+    "the defaulter must not also be this round's recipient",
+  );
+
+  const roster = await c.getRoster(0n);
+  const defaulters = roster.filter((m) => m.defaulted).map((m) => m.address.toLowerCase());
+  assert.deepEqual(defaulters, [priya.toLowerCase()], "exactly one defaulter, and it is Priya");
+});
+
 test("finished: everyone paid in $500 and received $500, deposits come back", async () => {
   const c = mockClient({ scenario: "finished", ...fast });
   const view = await c.getCircleView(0n, MOCK_ME);

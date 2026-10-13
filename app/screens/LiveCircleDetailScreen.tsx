@@ -239,6 +239,19 @@ export function LiveCircleDetailScreen({
           <View style={styles.missed}>
             <Text style={styles.missedTitle}>{missedBanner(defaulters.map((m) => nameOf(m.address)))}</Text>
             <Text style={styles.missedBody}>The pot stayed full, and nobody else had to make up the difference.</Text>
+            {/*
+              Without this the banner sits directly above a $0 pot and the two
+              contradict each other — the deposit covered the pot, so why is it
+              empty? Because that pot was paid out and this is a new round.
+              Saying which round turns the apparent contradiction into a fact.
+            */}
+            {!circle.finished ? (
+              <Text style={styles.missedRound}>
+                {circle.pot === 0n
+                  ? `Round ${circle.round + 1} just started, so the pot is filling up again.`
+                  : `Round ${circle.round + 1} just started.`}
+              </Text>
+            ) : null}
           </View>
         ) : null}
 
@@ -393,11 +406,14 @@ function missedSentence(names: string[]): string {
  * Said afterwards, on a screen that has moved on to the next round. The
  * default flag outlives the round it happened in, so "this round" would sit
  * directly above a pot that is legitimately back at $0 and read as a bug.
+ *
+ * "Last round" rather than "a round": it is the specific, recent thing that
+ * happened, and vagueness here reads as the app not being sure either.
  */
 function missedBanner(names: string[]): string {
   if (names.length === 0) return "";
   const deposit = names.length === 1 ? "their deposit" : "their deposits";
-  return `${listNames(names)} missed a round — ${deposit} covered it.`;
+  return `Last round, ${listNames(names)} missed — ${deposit} covered it.`;
 }
 
 type ActionKind = ReturnType<typeof usePrimaryAction>["kind"];
@@ -470,6 +486,7 @@ const styles = StyleSheet.create({
   },
   missedTitle: { ...type.subtitle, color: color.ink },
   missedBody: { ...type.body, color: color.due, marginTop: space.xs },
+  missedRound: { ...type.label, color: color.inkMuted, marginTop: space.sm },
 
   actionBlock: { gap: space.md, marginTop: space.sm, marginBottom: space.xxl },
 
