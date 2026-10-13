@@ -23,6 +23,13 @@ npm start
 No `.env` is needed: the live Monad testnet deployment is configured in
 `sdk/src/config.ts`, so the app reads real circles out of the box.
 
+> **After editing `.env`, bundle with a cleared cache.** Metro inlines
+> `EXPO_PUBLIC_*` values at bundle time but does not reliably invalidate its
+> cache when they change — a verified failure here was a build picking up a
+> *new* `.env` yet still shipping the *previous* value. `npm run export:web`
+> always clears; for the dev server use `npm run start:clear` after an `.env`
+> change, or passkeys and funding will fail for no visible reason.
+
 `npm start` prints a development-client QR code. **Passkeys need a custom
 development build — they do not work in Expo Go**, which cannot load the native
 WebAuthn module. `npm run start:go` opens an Expo Go tunnel instead, which is
@@ -41,13 +48,53 @@ require the domain association described below.
 
 ### Configure Mera Passkeys
 
-Mera passkeys require an HTTPS relying-party hostname your team controls, plus
-native app association files. Set `EXPO_PUBLIC_MERA_RP_ID`, the iOS/Android app
-IDs, `IOS_TEAM_ID`, and `ANDROID_SHA256_CERT_FINGERPRINTS` in `.env`. Generate
-the files with `npm run configure:passkeys`, publish the contents of
-`public/.well-known/` at `https://<rp-id>/.well-known/` without redirects, then
-run `npm run prebuild` and build/install a custom development client. iOS builds
-need Apple signing credentials; the Codespace itself cannot run Xcode.
+Mera passkeys always need an HTTPS relying-party hostname the team controls.
+There are two ways to reach a real phone from there, and the SDK supports both:
+`sdk/src/mera.ts` picks the WebAuthn client by platform, using Mera's built-in
+browser client (`navigator.credentials`) when a `document` exists and its
+`react-native-passkey` bridge otherwise.
+
+**Browser (no app build).** Serve the web export over HTTPS and open it on the
+phone. No association files, no store credentials, no build queue:
+
+```sh
+npm run export:web      # writes dist/
+npx vercel deploy --prod dist
+```
+
+Then set `EXPO_PUBLIC_MERA_RP_ID` to the deployed hostname and export again, so
+the bundle knows its own relying party. Note that `expo export` copies
+`public/` into `dist/`, so the same deployment can also serve the native
+association files below.
+
+**Native development client.** Set `EXPO_PUBLIC_MERA_RP_ID`, the iOS/Android app
+IDs, `IOS_TEAM_ID`, and `ANDROID_SHA256_CERT_FINGERPRINTS` in `.env` (Android
+fingerprints come from `eas credentials`). Generate the files with
+`npm run configure:passkeys` — `docs/assetlinks.template.json` shows the shape —
+publish the contents of `public/.well-known/` at `https://<rp-id>/.well-known/`
+without redirects, then build and install a development client:
+
+```sh
+eas login && eas init           # prints the project ID; set EAS_PROJECT_ID
+eas build --profile development --platform android
+```
+
+Expo Go cannot load the native passkey module, so run `npm run start:dev`
+against the installed client. iOS additionally needs Apple signing credentials,
+and its association file must be served as `application/json`.
+
+### Funding new accounts
+
+A passkey account is a plain EOA, so a brand-new one cannot pay the network fee
+on its first action. On sign-up the app tops it up from a throwaway account set
+in `EXPO_PUBLIC_GAS_FUNDER_KEY`, behind a "Setting up your account…" state.
+**This is testnet only: Metro inlines `EXPO_PUBLIC_*` values into the app
+bundle, so that key ships inside the installed app and must hold nothing but
+testnet MON** — never the deployer key, never anything reused elsewhere. The
+production answer is sponsorship (a paymaster, or EIP-7702 delegation to a
+sponsoring contract), not a key on the device. Leave the variable blank and the
+app runs without funding; `sdk/src/gas.ts` documents the thresholds and the
+measured per-circle cost.
 
 The app stores only the passkey credential ID and derived public address in
 SecureStore. PRF output, seed, and private-key bytes are not persisted. Clearing
@@ -126,6 +173,14 @@ The SDK e2e and contract tests require Foundry (`anvil` and `forge`).
 	still need team-specific identifiers and credentials, and **the passkey
 	ceremony has not yet been exercised on a physical device** — everything else
 	listed here is covered by the test suites below.
+- New accounts are funded on sign-up so their first action can pay the network
+	fee, behind a "Setting up your account…" state with a retry. This needs
+	`EXPO_PUBLIC_GAS_FUNDER_KEY`; without it the app runs read-only. It is a
+	testnet stand-in for sponsorship, not sponsorship — see above.
+- The app builds and renders as a web export as well as a native app, which is
+	the route to a passkey on a real phone that needs no app build. Which
+	WebAuthn client is used is chosen by platform and covered by tests; on web,
+	passkey metadata falls back from SecureStore to `localStorage`.
 - The ChitCircle contract is deployed and Sourcify-verified on Monad testnet,
 	and its address, deploy block and the official AUSD address are configured in
 	the SDK, so no `.env` is required to run against the live deployment.

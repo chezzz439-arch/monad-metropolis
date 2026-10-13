@@ -6,6 +6,7 @@ import {
   DEFAULT_TOP_UP_TO,
   FunderEmptyError,
   GasDripper,
+  isFunderKey,
   type GasFunder,
 } from "../src/gas.ts";
 
@@ -160,6 +161,30 @@ test("a nonsensical threshold is rejected at construction", async () => {
       }),
     /must exceed/,
   );
+});
+
+test("a malformed funder key reads as not-configured rather than throwing", async () => {
+  // The app treats `false` as "funding is off" and runs read-only. Letting a
+  // typo through instead means viem throws an error quoting the bad value,
+  // which then has to be kept out of a log and off the screen.
+  const valid = `0x${"ab".repeat(32)}`;
+  assert.equal(isFunderKey(valid), true);
+  assert.equal(isFunderKey(valid.toUpperCase().replace("0X", "0x")), true, "hex case is irrelevant");
+
+  for (const bad of [
+    undefined,
+    null,
+    "",
+    "   ",
+    `${"ab".repeat(32)}`, // no 0x
+    `0x${"ab".repeat(31)}`, // a byte short
+    `0x${"ab".repeat(33)}`, // a byte long
+    `0x${"ab".repeat(32)}\n`, // trailing newline from a copy-paste
+    `0x${"zz".repeat(32)}`, // not hex
+    `0x${"0".repeat(64)}`, // the zero key: valid shape, no account
+  ]) {
+    assert.equal(isFunderKey(bad), false, `rejected: ${JSON.stringify(bad)}`);
+  }
 });
 
 test("defaults cover a full five-round circle with headroom", async () => {

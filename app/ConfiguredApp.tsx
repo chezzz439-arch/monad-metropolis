@@ -20,8 +20,12 @@ import {
   type Deployment,
 } from "../sdk/src/index";
 import { clearStoredPasskeyAccount, loadStoredPasskeyAccount, saveStoredPasskeyAccount, type StoredPasskeyAccount } from "./services/passkeyStorage";
+import { dripperFor } from "./config/funding";
 
 type Tab = "Circles" | "Activity" | "Send";
+
+/** Whether the new account has been made ready to spend. */
+type SetupState = "idle" | "working" | "failed";
 
 export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
   const [accountInput, setAccountInput] = useState("");
@@ -33,6 +37,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
   const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [passkeyError, setPasskeyError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [setupState, setSetupState] = useState<SetupState>("idle");
   const rpId = typeof Constants.expoConfig?.extra?.meraRpId === "string" ? Constants.expoConfig.extra.meraRpId : "";
   const account = meraAccount?.address ?? (isAddress(accountInput) ? (accountInput as Address) : null);
 
@@ -40,6 +45,9 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
     () => clientFor(deployment, meraAccount ? meraSigner(meraAccount, deployment.rpcUrl) : undefined),
     [deployment, meraAccount],
   );
+  const dripper = useMemo(() => dripperFor(deployment), [deployment]);
+  /** Nothing that spends should be reachable until the account can pay for it. */
+  const canWrite = Boolean(meraAccount) && setupState !== "working";
 
   useEffect(() => {
     if (!rpId) {
@@ -70,6 +78,26 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
     setPasskeyError(null);
   };
 
+  /**
+   * Makes a freshly derived account ready to spend.
+   *
+   * Nothing from the failure is shown: the funder's own errors name its
+   * address, its balance and the network's fee unit — all of which the team
+   * guide keeps out of the UI. The user gets one sentence and a retry, and the
+   * account stays usable in case the top-up actually landed and only the
+   * receipt lookup failed.
+   */
+  const prepareAccount = async (address: Address) => {
+    if (!dripper) return;
+    setSetupState("working");
+    try {
+      await dripper.ensure(address);
+      setSetupState("idle");
+    } catch {
+      setSetupState("failed");
+    }
+  };
+
   const runPasskey = async (mode: "create" | "sign-in" | "discover") => {
     if (!rpId) {
       setPasskeyError("Set EXPO_PUBLIC_MERA_RP_ID to an HTTPS hostname your team controls, then configure its iOS/Android association files.");
@@ -86,6 +114,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
       };
       const next = mode === "create" ? await createPasskeyAccount(options) : await signInWithPasskey(options);
       await rememberAccount(next);
+      await prepareAccount(next.address);
     } catch (error) {
       setPasskeyError(describeMeraError(error));
     } finally {
@@ -96,6 +125,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
   const lockAccount = () => {
     if (meraAccount) endMeraSession(meraAccount);
     setMeraAccount(null);
+    setSetupState("idle");
   };
 
   const forgetAccount = async () => {
@@ -127,6 +157,20 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
               <Text style={styles.accountLabel}>PASSKEY ACCOUNT</Text>
               <Text selectable style={styles.accountAddress}>{meraAccount.address}</Text>
               <Text style={styles.noticeBody}>Prompt-free contribution guard expires {meraAccount.limits.expiresAt.toLocaleTimeString()} · enforced by this app.</Text>
+              {setupState === "working" && (
+                <View style={styles.setupRow}>
+                  <ActivityIndicator color="#b8c9bd" />
+                  <Text style={styles.setupText}>Setting up your account…</Text>
+                </View>
+              )}
+              {setupState === "failed" && (
+                <View style={styles.setupRow}>
+                  <Text style={styles.setupText}>We could not finish setting up your account. You can still look around, but payments may not go through yet.</Text>
+                  <Pressable style={styles.smallButton} onPress={() => void prepareAccount(meraAccount.address)}>
+                    <Text style={styles.smallButtonText}>Try again</Text>
+                  </Pressable>
+                </View>
+              )}
               <View style={styles.accountActions}>
                 <Pressable style={styles.smallButton} onPress={lockAccount}><Text style={styles.smallButtonText}>Lock</Text></Pressable>
                 <Pressable style={styles.smallButtonSecondary} onPress={forgetAccount}><Text style={styles.smallButtonSecondaryText}>Forget device</Text></Pressable>
@@ -165,7 +209,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
 
         {circleId !== null ? (
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
-            <LiveCircleDetailScreen circleId={circleId} account={account ?? undefined} canWrite={Boolean(meraAccount)} deployment={deployment} onBack={() => setCircleId(null)} />
+            <LiveCircleDetailScreen circleId={circleId} account={account ?? undefined} canWrite={canWrite} deployment={deployment} onBack={() => setCircleId(null)} />
           </ScrollView>
         ) : !account ? (
           <ScrollView contentContainerStyle={styles.content}>
@@ -180,7 +224,11 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
               myAccount={account}
               onSelectCircle={setCircleId}
               expectedDeployment={{ chainId: deployment.chainId, contract: deployment.chitCircle }}
-              onCreateNew={() => meraAccount ? setCreateOpen(true) : Alert.alert("Connect a passkey", "Create or unlock a passkey account before creating a circle.")}
+              onCreateNew={() => {
+                if (canWrite) return setCreateOpen(true);
+                if (meraAccount) return Alert.alert("Setting up your account", "This takes a moment. Try again shortly.");
+                Alert.alert("Sign in first", "Create or unlock your account before starting a circle.");
+              }}
             />
           </View>
         ) : tab === "Send" ? (
@@ -189,7 +237,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
               tokenAddress={deployment.token}
               myAccount={account}
               faucetAddress={MONAD_TESTNET_AUSD_FAUCET_ADDRESS}
-              readOnly={!meraAccount}
+              readOnly={!canWrite}
             />
           </ScrollView>
         ) : (
@@ -243,6 +291,8 @@ const styles = StyleSheet.create({
   accountLabel: { color: "#b8c9bd", fontSize: 9, fontWeight: "700" },
   accountAddress: { color: "#fff", fontSize: 12, fontWeight: "600", marginTop: 5 },
   accountActions: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  setupRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
+  setupText: { flex: 1, color: "#b8c9bd", fontSize: 11, lineHeight: 16 },
   smallButton: { minHeight: 40, paddingHorizontal: 13, borderRadius: 4, backgroundColor: "#32745b", alignItems: "center", justifyContent: "center" },
   smallButtonText: { color: "#fff", fontSize: 11, fontWeight: "700" },
   smallButtonSecondary: { minHeight: 40, paddingHorizontal: 12, borderRadius: 4, borderWidth: 1, borderColor: "#b8c9bd", alignItems: "center", justifyContent: "center" },

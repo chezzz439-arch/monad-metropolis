@@ -70,6 +70,18 @@ export interface GasChainReader {
  * demo that is an accepted risk on a testnet-only key, and it is one more
  * reason the production answer is a relayer rather than this.
  */
+/**
+ * Shape check for a funder key read from the environment.
+ *
+ * Without it, a typo reaches {@link funderFromPrivateKey} and viem throws an
+ * error that quotes the malformed value — which then lands in a log or on an
+ * error screen. An unset or malformed key should instead read as "funding is
+ * not configured", a state the caller can handle quietly.
+ */
+export function isFunderKey(value: string | null | undefined): value is `0x${string}` {
+  return typeof value === "string" && /^0x[0-9a-f]{64}$/i.test(value) && !/^0x0+$/.test(value);
+}
+
 export function funderFromPrivateKey(
   privateKey: `0x${string}`,
   rpcUrl = "https://testnet-rpc.monad.xyz",

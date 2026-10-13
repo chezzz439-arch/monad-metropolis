@@ -6,10 +6,12 @@
   "scripts": {
     "start": "expo start --tunnel --dev-client",
     "start:dev": "expo start --tunnel --dev-client",
+    "start:clear": "expo start --tunnel --dev-client --clear",
     "start:go": "expo start --tunnel --go",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "export:web": "expo export -p web --clear",
     "prebuild": "expo prebuild",
     "ios:dev": "expo run:ios --device",
     "android:dev": "expo run:android --device",

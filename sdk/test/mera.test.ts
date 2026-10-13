@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createSecp256k1SigningSession, getEvmAddress } from "@category-labs/mera";
+import { createSecp256k1SigningSession, getEvmAddress, isMeraError } from "@category-labs/mera";
 import { hexToBytes, type Address } from "viem";
 import {
   BID_SALT_PREFIX,
@@ -9,6 +9,7 @@ import {
   endMeraSession,
   meraSigner,
   sessionGuard,
+  signInWithPasskey,
   type MeraAccount,
   type MeraSessionLimits,
 } from "../src/mera.ts";
@@ -24,7 +25,7 @@ const activeLimits: MeraSessionLimits = {
 };
 
 /**
- * Thrown by `nativeWebAuthnClient()` under node, where the React Native
+ * Thrown by `webAuthnClientForPlatform()` under node, where the React Native
  * WebAuthn module cannot be imported. Several tests below use it as proof that
  * a code path reached the re-prompt — there is no other way to observe "a
  * passkey ceremony was requested" without a real authenticator.
@@ -209,6 +210,40 @@ test("the signer reports the account address the hooks will display", () => {
   const account = prfAccount();
   assert.equal(meraSigner(account, DEAD_RPC).address, account.address);
   endMeraSession(account);
+});
+
+// -- which WebAuthn client each platform gets ------------------------------
+
+test("without a document, the ceremony needs the React Native bridge", async () => {
+  // Node is standing in for React Native here: neither has a `document`, and
+  // the bridge module is what a native build supplies.
+  assert.match(
+    await errorFrom(() => signInWithPasskey({ rpId: "accounts.example", contract })),
+    RE_PROMPTED,
+  );
+});
+
+test("in a browser, the ceremony goes to Mera's own client instead of the bridge", async () => {
+  // This is the whole web fallback: with a `document` present, no client is
+  // passed and Mera uses navigator.credentials. Node has no authenticator, so
+  // it still fails — but it must fail *inside Mera* rather than on the missing
+  // React Native module, which is what proves the routing.
+  const globals = globalThis as { document?: unknown };
+  globals.document = {};
+  let thrown: unknown;
+  try {
+    await signInWithPasskey({ rpId: "accounts.example", contract });
+  } catch (error) {
+    thrown = error;
+  } finally {
+    delete globals.document;
+  }
+
+  assert.ok(thrown, "node has no authenticator, so this must fail either way");
+  assert.doesNotMatch(String((thrown as Error).message), RE_PROMPTED, "must not reach for the native bridge on web");
+  assert.ok(isMeraError(thrown), "the failure came from Mera's browser client");
+  assert.equal((thrown as { code: string }).code, "PASSKEY_OPERATION_FAILED");
+  assert.doesNotMatch(describeMeraError(thrown), /navigator|WebAuthn/i, "and the user never sees that");
 });
 
 // -- bid secrets -----------------------------------------------------------

@@ -69,6 +69,7 @@ export {
   FunderEmptyError,
   GasDripper,
   funderFromPrivateKey,
+  isFunderKey,
   type GasChainReader,
   type GasDripConfig,
   type GasDripResult,

@@ -65,7 +65,20 @@ const erc20TransferAbi = [{
   outputs: [{ type: "bool" }],
 }] as const;
 
-async function nativeWebAuthnClient() {
+/**
+ * Picks the WebAuthn client for wherever this is running.
+ *
+ * In a browser, returning undefined leaves Mera on its own default client,
+ * which calls `navigator.credentials` — that is the whole web fallback, and it
+ * is why the app can be served over HTTPS and used from a phone browser
+ * without an app build. React Native has no `navigator.credentials`, so it
+ * needs Mera's react-native-passkey bridge instead.
+ *
+ * `document` is the discriminator rather than `navigator`: React Native
+ * defines a partial `navigator` global, but never a `document`.
+ */
+async function webAuthnClientForPlatform() {
+  if (typeof document !== "undefined") return undefined;
   try {
     return (await import("@category-labs/mera/react-native-webauthn-client")).reactNativeWebAuthnClient;
   } catch {
@@ -110,7 +123,7 @@ export async function createPasskeyAccount(options: PasskeyAccountOptions): Prom
   const result = await createPasskeyWithPrfOutput({
     rp: { id: options.rpId, name: "Chit Circle" },
     user: { name: options.userName ?? "chit-circle-account", displayName: options.displayName ?? "Chit Circle account" },
-    webAuthnClient: await nativeWebAuthnClient(),
+    webAuthnClient: await webAuthnClientForPlatform(),
   });
   return accountFromPrfOutput(result, options);
 }
@@ -120,7 +133,7 @@ export async function signInWithPasskey(options: PasskeyAccountOptions): Promise
   const result = await getPasskeyPrfOutput({
     rpId: options.rpId,
     credential: options.credential,
-    webAuthnClient: await nativeWebAuthnClient(),
+    webAuthnClient: await webAuthnClientForPlatform(),
   });
   return accountFromPrfOutput(result, options);
 }
@@ -130,7 +143,7 @@ export async function openSigningSession(account: MeraAccount): Promise<MeraAcco
   const result = await getPasskeyPrfOutput({
     rpId: account.rpId,
     credential: { credentialId: account.credentialId },
-    webAuthnClient: await nativeWebAuthnClient(),
+    webAuthnClient: await webAuthnClientForPlatform(),
   });
   const renewed = accountFromPrfOutput(result, {
     rpId: account.rpId,
@@ -152,7 +165,7 @@ export async function deriveBidSecret(
     rpId: account.rpId,
     credential: { credentialId: account.credentialId },
     prfSalt,
-    webAuthnClient: await nativeWebAuthnClient(),
+    webAuthnClient: await webAuthnClientForPlatform(),
   });
   try {
     return toHex(result.prfOutput);
