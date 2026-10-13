@@ -10,27 +10,27 @@ Team project for the Monad Metropolis hackathon (Consumer Products & Payments tr
 
 ```sh
 npm install
-cp .env.example .env
 npm start
 ```
 
-`npm start` opens an Expo Go-compatible tunnel and prints an `exp://` QR code.
-Scan it inside Expo Go. Mera passkeys use native modules and do not run in Expo
-Go; for those, install a custom development build and run `npm run start:dev`,
-which prints a development-client QR instead. `npm run web` starts the separate
-browser build.
+No `.env` is needed: the live Monad testnet deployment is configured in
+`sdk/src/config.ts`, so the app reads real circles out of the box.
 
-To inspect live Monad testnet circles, fill in the deployed ChitCircle address
-and deployment block in `.env`, then restart Expo. Agora's official deployment
-table lists Monad testnet AUSD as
-`0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC`; this address is prefilled in the
-examples and can be overridden with `EXPO_PUBLIC_AUSD_ADDRESS`. The AUSD faucet
-contract is [`0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C`](https://testnet.monadscan.com/address/0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C#code).
-The Send screen links to this faucet for test-token claims. Enter a public
-account address to inspect circles, or create/unlock a passkey account to submit
-transactions. Passkey actions require the domain association and custom native
-build described below. With ChitCircle deployment values missing, the app shows
-clearly labeled preview data instead.
+`npm start` prints a development-client QR code. **Passkeys need a custom
+development build — they do not work in Expo Go**, which cannot load the native
+WebAuthn module. `npm run start:go` opens an Expo Go tunnel instead, which is
+fine for working on screens but will fail the moment you touch sign-in.
+`npm run web` starts the separate browser build.
+
+Agora's official deployment table lists Monad testnet AUSD as
+`0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC`; it is configured already and can
+be overridden with `EXPO_PUBLIC_AUSD_ADDRESS`. The AUSD faucet contract is
+[`0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C`](https://testnet.monadscan.com/address/0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C#code),
+and the Send screen links to it for test-money claims — note its 60-second
+cooldown is **global to the faucet, not per account**, so a group cannot all
+claim at once. Enter a public account address to inspect circles, or create /
+unlock a passkey account to submit transactions. Passkey actions additionally
+require the domain association described below.
 
 ### Configure Mera Passkeys
 
@@ -114,12 +114,16 @@ The SDK e2e and contract tests require Foundry (`anvil` and `forge`).
 	and writes through the SDK.
 - Mera passkey account derivation, viem signing, credential metadata storage,
 	session expiry, and a client-side contribution scope/cap are implemented.
-	The relying-party domain association and native signing build still need
-	team-specific identifiers and credentials.
+	Every write re-prompts for the passkey except a contribution within the
+	configured cap. The relying-party domain association and native signing build
+	still need team-specific identifiers and credentials, and **the passkey
+	ceremony has not yet been exercised on a physical device** — everything else
+	listed here is covered by the test suites below.
 - The ChitCircle contract is deployed and Sourcify-verified on Monad testnet,
 	and its address, deploy block and the official AUSD address are configured in
 	the SDK, so no `.env` is required to run against the live deployment.
 - Bid mode is a stretch goal and intentionally reverts as unimplemented.
+- The app ships no custom icon or splash yet, so Expo's default is used.
 - Transaction activity indexing, invite landing page/universal links, live
 	product deployment, tester results, logo, pitch/demo videos, and hackathon
 	submission are external or unfinished deliverables.
