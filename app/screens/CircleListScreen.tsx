@@ -5,7 +5,7 @@
  * questions anyone opens this app to answer: how much do I owe, and when do I
  * get paid.
  */
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { Address } from "viem";
 import { useInvite, useMyCircles } from "../../sdk/src/hooks";
@@ -14,6 +14,9 @@ import { Button, Card, Chip, EmptyState, ErrorNote, ProgressDots, SectionTitle, 
 import { color, radius, space, tap, type } from "../design/tokens";
 import { friendlyError, money, timeLeft } from "../design/copy";
 import { circleName } from "../services/circleNames";
+
+/** Long enough to read, short enough that it is gone before it is clutter. */
+const WELCOME_MS = 5200;
 
 interface CircleListScreenProps {
   myAccount: Address;
@@ -27,6 +30,12 @@ interface CircleListScreenProps {
   onCreateNew: () => void;
   expectedDeployment?: { chainId: number; contract: Address };
   notice?: ReactNode;
+  /**
+   * True when this screen was reached by signing in rather than signing up.
+   * The banner it triggers is the payoff for the claim on the welcome screen —
+   * that nothing is stored anywhere and a passkey brings it all back.
+   */
+  welcomeBack?: boolean;
 }
 
 export function CircleListScreen({
@@ -37,15 +46,38 @@ export function CircleListScreen({
   onCreateNew,
   expectedDeployment,
   notice,
+  welcomeBack,
 }: CircleListScreenProps) {
   const [joinOpen, setJoinOpen] = useState(false);
   const { data: circles, loading, error, refresh } = useMyCircles(myAccount, { knownIds });
   const list = circles ?? [];
 
+  // Shown once the circles are actually on screen, not while they load: the
+  // claim is "they came back", and saying so above two skeletons asks the user
+  // to take it on trust at the exact moment we could instead show them.
+  const [showWelcome, setShowWelcome] = useState(false);
+  useEffect(() => {
+    if (!welcomeBack || list.length === 0) return;
+    setShowWelcome(true);
+    const timer = setTimeout(() => setShowWelcome(false), WELCOME_MS);
+    return () => clearTimeout(timer);
+  }, [welcomeBack, list.length]);
+
   return (
     <>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {notice}
+
+        {showWelcome ? (
+          <View style={styles.welcome}>
+            <Text style={styles.welcomeTitle}>Welcome back</Text>
+            <Text style={styles.welcomeBody}>
+              {list.length === 1
+                ? `${circleName(list[0]!.circleId, names)} is here, exactly as you left it.`
+                : `All ${list.length} of your circles are here, exactly as you left them.`}
+            </Text>
+          </View>
+        ) : null}
 
         {error ? (
           <View style={styles.block}>
@@ -240,6 +272,14 @@ function JoinSheet({
 const styles = StyleSheet.create({
   content: { paddingHorizontal: space.xl, paddingBottom: space.xxxl, flexGrow: 1 },
   block: { marginBottom: space.xxl },
+  welcome: {
+    backgroundColor: color.brandSoft,
+    borderRadius: radius.lg,
+    padding: space.lg,
+    marginBottom: space.xl,
+  },
+  welcomeTitle: { ...type.labelStrong, color: color.brand },
+  welcomeBody: { ...type.body, color: color.inkMuted, marginTop: space.xs },
   actions: { gap: space.md, marginTop: space.sm },
 
   card: { marginBottom: space.md },

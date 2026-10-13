@@ -46,6 +46,12 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [setupState, setSetupState] = useState<SetupState>("idle");
   const [dollars, setDollars] = useState<DollarOutcome | null>(null);
+  /**
+   * Reached by signing in rather than signing up. Drives the "Welcome back"
+   * banner, which is the only moment the app can show that the passkey really
+   * did bring everything back rather than just claiming it on the way in.
+   */
+  const [signedBackIn, setSignedBackIn] = useState(false);
   const [names, setNames] = useState<Record<string, string>>({});
   const rpId = typeof Constants.expoConfig?.extra?.meraRpId === "string" ? Constants.expoConfig.extra.meraRpId : "";
   const account: Address | null = meraAccount?.address ?? null;
@@ -162,6 +168,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
         ...(mode === "sign-in" && storedAccount ? { credential: { credentialId: storedAccount.credentialId } } : {}),
       };
       const next = mode === "create" ? await createPasskeyAccount(options) : await signInWithPasskey(options);
+      setSignedBackIn(mode !== "create");
       await rememberAccount(next);
       await prepareAccount(next.address);
     } catch (error) {
@@ -173,6 +180,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
 
   const lockAccount = () => {
     if (meraAccount) endMeraSession(meraAccount);
+    setSignedBackIn(false);
     setMeraAccount(null);
     setSetupState("idle");
     setCircleId(null);
@@ -253,6 +261,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
             onSelectCircle={setCircleId}
             onCreateNew={() => setCreateOpen(true)}
             expectedDeployment={{ chainId: deployment.chainId, contract: deployment.chitCircle }}
+            welcomeBack={signedBackIn}
           />
         )}
 

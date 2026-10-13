@@ -6,7 +6,7 @@
  * card sits third because it is the thing this product exists to prove — when
  * someone does not pay, the group does not lose anything.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { Address } from "viem";
 import {
@@ -24,6 +24,8 @@ import {
 import type { Deployment } from "../../sdk/src/config";
 import { Avatar, Button, Card, Chip, Divider, ErrorNote, ProgressDots, SectionTitle, Skeleton } from "../components/ui";
 import { JustNow } from "../components/JustNow";
+import { CoinDrop } from "../components/CoinDrop";
+import { CountUpMoney } from "../components/CountUpMoney";
 import { SuccessScreen, type Celebration } from "./SuccessScreen";
 import { color, radius, space, tap, type } from "../design/tokens";
 import { friendlyError, money, personName, timeLeft } from "../design/copy";
@@ -99,6 +101,22 @@ export function LiveCircleDetailScreen({
     // object every poll; keying on what actually changes avoids refetching the
     // roster 8 times a minute for nothing.
   }, [client, circleId, circle?.round, circle?.members.length, circle?.outstanding.length, retry]);
+
+  /**
+   * A coin drops only when the pot actually grew.
+   *
+   * Keyed off the pot rather than off `changedAt`, because a settle also
+   * "changes" the circle and empties the pot — dropping a coin into an
+   * emptying pot would say the opposite of what happened.
+   */
+  const [coinAt, setCoinAt] = useState<number | null>(null);
+  const lastPot = useRef<bigint | null>(null);
+  useEffect(() => {
+    if (!circle) return;
+    const previous = lastPot.current;
+    lastPot.current = circle.pot;
+    if (previous !== null && circle.pot > previous) setCoinAt(Date.now());
+  }, [circle?.pot, circle]);
 
   const nameOf = (who: Address) => {
     const slot = circle?.members.findIndex((m) => m.toLowerCase() === who.toLowerCase()) ?? -1;
@@ -202,8 +220,9 @@ export function LiveCircleDetailScreen({
       <ScrollView contentContainerStyle={styles.content}>
         {/* Pot */}
         <View style={styles.pot}>
+          <CoinDrop at={coinAt} />
           <Text style={styles.potLabel}>Pot this round</Text>
-          <Text style={styles.potValue}>{money(circle.pot)}</Text>
+          <CountUpMoney value={circle.pot} style={styles.potValue} />
           <Text style={styles.potOf}>
             of {money(circle.expectedPot)} · {money(circle.contribution)} each
           </Text>
@@ -351,7 +370,12 @@ export function LiveCircleDetailScreen({
                 return (
                   <View key={member.address}>
                     {index > 0 ? <Divider /> : null}
-                    <View style={styles.memberRow}>
+                    {/*
+                      The row itself carries the miss, not just the chip at the
+                      end of it. On a projector the chip is the smallest thing
+                      on screen, and this is the moment the whole demo is for.
+                    */}
+                    <View style={[styles.memberRow, member.defaulted && styles.memberRowMissed]}>
                       <Avatar
                         name={name}
                         size={44}
@@ -511,6 +535,11 @@ const styles = StyleSheet.create({
   shareText: { ...type.labelStrong, color: color.brand },
   memberCard: { paddingVertical: space.xs, paddingHorizontal: space.xl },
   memberRow: { flexDirection: "row", alignItems: "center", gap: space.lg, paddingVertical: space.md, minHeight: 72 },
+  memberRowMissed: {
+    backgroundColor: color.missedSoft,
+    marginHorizontal: -space.xl,
+    paddingHorizontal: space.xl,
+  },
   memberText: { flex: 1 },
   memberName: { ...type.bodyStrong, color: color.ink },
   memberNote: { ...type.label, color: color.inkFaint, marginTop: 1 },

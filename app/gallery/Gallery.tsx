@@ -159,6 +159,21 @@ const SCREENS: Record<string, () => React.ReactElement> = {
 
   "home-error": () => <HomeError />,
 
+  /** Straight after signing in on a device that holds nothing. */
+  "home-welcome-back": () => (
+    <Shell scenario="midRound">
+      {() => (
+        <CircleListScreen
+          myAccount={MOCK_ME}
+          names={NAMES}
+          welcomeBack
+          onSelectCircle={() => {}}
+          onCreateNew={() => {}}
+        />
+      )}
+    </Shell>
+  ),
+
   detail: () => (
     <Shell scenario="midRound" title="Sunday Table" onBack>
       {() => (
