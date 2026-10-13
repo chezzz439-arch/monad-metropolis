@@ -1,4 +1,11 @@
-# Monad Metropolis Hackathon
+<p align="center">
+  <img src="assets/logo.png" alt="Chit Circle" width="220">
+</p>
+
+# Chit Circle
+
+A savings circle you run with people you trust: everyone puts in the same
+amount each round, and each round one member receives the whole pot.
 
 Team project for the Monad Metropolis hackathon (Consumer Products & Payments track).
 
@@ -123,9 +130,10 @@ The SDK e2e and contract tests require Foundry (`anvil` and `forge`).
 	and its address, deploy block and the official AUSD address are configured in
 	the SDK, so no `.env` is required to run against the live deployment.
 - Bid mode is a stretch goal and intentionally reverts as unimplemented.
-- The app ships no custom icon or splash yet, so Expo's default is used.
+- Branding is in place: the app icon, Android adaptive icon, splash and web
+	favicon are generated from the team logo in `assets/`.
 - Transaction activity indexing, invite landing page/universal links, live
-	product deployment, tester results, logo, pitch/demo videos, and hackathon
+	product deployment, tester results, pitch/demo videos, and hackathon
 	submission are external or unfinished deliverables.
 
 ## Branches
