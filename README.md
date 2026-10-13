@@ -179,9 +179,9 @@ its faucet on Monad testnet (addresses above).
 
 ## AI-tool disclosure
 
-AI coding assistants were used during this project, as permitted by the
-hackathon rules. Specifically, **Anthropic's Claude (via Claude Code)** was used
-for:
+AI tools were used during this project, as permitted by the hackathon rules.
+
+**Anthropic's Claude (via Claude Code)** was used for:
 
 - drafting and reviewing TypeScript in the SDK (including `sdk/src/mera.ts`,
   `gas.ts`, `mock.ts` and their tests), and the Solidity test
@@ -192,9 +192,13 @@ for:
 - reconciling the team's branches, and writing parts of this README and
   `docs/api.md`.
 
+**Claude, via Canva**, produced the Chit Circle logo artwork in `assets/`. The
+app icon, Android adaptive icon, splash and favicon are derived from it.
+
 Every AI-assisted change was reviewed by a team member, and the test suites and
 the live-testnet lifecycle run in this repository are our verification of it.
-Design, architecture and all product decisions are the team's own.
+Product direction, architecture and all engineering decisions are the team's
+own.
 
 ## License
 
