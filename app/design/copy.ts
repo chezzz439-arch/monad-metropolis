@@ -7,7 +7,7 @@
  * Mera codes, and the team guide allows exactly one friendly sentence on
  * screen. Nothing here reaches into the SDK — it only reads what it is given.
  */
-import { describeMeraError, formatAmount, formatCountdown, nameFor } from "../../sdk/src/index";
+import { describeMeraError, formatAmount, formatCountdown, nameFor } from "../../sdk/src/index.ts";
 
 /** `100000000n` -> `"$100"`, `100500000n` -> `"$100.50"`, `1000000000n` -> `"$1,000"`. */
 export function money(amount: bigint): string {
@@ -79,6 +79,14 @@ const REVERTS: Record<string, string> = {
 
 /** Matched against the raw message when there is no custom error to read. */
 const PATTERNS: [RegExp, string][] = [
+  // Before the balance line, and the distinction matters. Running out of the
+  // network's own fee token is not the same as running out of money, but viem
+  // reports both as "insufficient funds" — so an organizer who had just spent
+  // their fee allowance creating and joining a circle was told their balance
+  // was short while their $400 sat untouched. The app tops accounts up itself,
+  // so the honest instruction is to wait a moment, not to go and find funds.
+  [/insufficient funds|funds for gas|gas \* price|out of gas/i,
+    "Your account is being topped up. Give it a few seconds and try again."],
   [/insufficient|exceeds balance|exceeds allowance/i, "You do not have enough in your balance for this."],
   [/rejected|denied|cancell?ed|NotAllowedError|AbortError/i, "That confirmation was cancelled. Tap again to continue."],
   // Before the generic network line: a rate limit is a busy network, not a

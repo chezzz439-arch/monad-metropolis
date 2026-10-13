@@ -40,19 +40,22 @@ export const DEFAULT_MIN_BALANCE = parseEther("0.02");
 /**
  * Top up to this.
  *
- * MEASURED, NOT GUESSED. At the 102 gwei seen on testnet in Oct 2026, and the
- * `forge test --gas-report` figures below: join 0.0147, contribute 0.0094,
- * settle 0.0084, withdraw 0.0054 MON. So 0.05 MON is ~490k gas — a join, three
- * contributions and a settle, which covers the two-minute demo circle with
- * room to spare.
+ * MEASURED ON CHAIN, not from the gas report. Receipts from the live site at
+ * 102 gwei: `createCircle` 173,174 gas = 0.0177 MON, and the `join` that fills
+ * a circle 205,514 = 0.0210 MON. An ERC-20 `approve` adds about 0.005.
  *
- * IT DOES NOT COVER A FULL FIVE-ROUND CIRCLE. That is ~740k gas, about 0.0755
- * MON, and an account would run dry in the last round. {@link GasDripper.ensure}
- * re-tops anything below {@link DEFAULT_MIN_BALANCE}, but the app only calls it
- * at sign-in, so a member who stays signed in through five real rounds would
- * stall. Raise this (see `EXPO_PUBLIC_GAS_DRIP_TOP_UP`) before running longer
- * circles; it is deliberately low so one funded account stretches across many
- * demo sign-ups.
+ * Those are well above the `forge --gas-report` figures this constant was
+ * first sized from — the join that starts a circle also pulls everyone's
+ * deposit — and the error was not theoretical: an organizer who created a
+ * circle and joined it had spent 0.043 of their 0.05 and could not pay the
+ * first round. The app told them "You do not have enough in your balance",
+ * which is about dollars, and their dollars were fine.
+ *
+ * It is still deliberately small, because {@link GasDripper.ensure} is now
+ * called before every write rather than only at sign-in: an account that runs
+ * low mid-circle is topped straight back up. A large upfront grant would
+ * instead strand MON in accounts that never spend it, and the funder is the
+ * scarcest thing in a demo — roughly 20 sign-ups per MON.
  */
 export const DEFAULT_TOP_UP_TO = parseEther("0.05");
 

@@ -39,12 +39,15 @@ export function LiveCircleDetailScreen({
   account,
   canWrite,
   deployment,
+  onBeforeWrite,
   onBack,
 }: {
   circleId: bigint;
   account?: Address;
   canWrite: boolean;
   deployment: Deployment;
+  /** Called before every write, to keep the account able to pay the fee. */
+  onBeforeWrite?: () => Promise<void>;
   onBack: () => void;
 }) {
   const client = useChitClient();
@@ -136,6 +139,8 @@ export function LiveCircleDetailScreen({
       round: circle.round,
       deposit: circle.me?.deposit ?? 0n,
     };
+
+    await onBeforeWrite?.();
 
     let result: TxResult | null = null;
     if (primaryAction.kind === "join") result = await join.run(circleId);

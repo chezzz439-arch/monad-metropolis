@@ -150,6 +150,26 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
     }
   };
 
+  /**
+   * Make sure the account can still pay the network fee, right before it has
+   * to. Funding only at sign-in was not enough: creating a circle and joining
+   * it costs about 0.043 MON of a 0.05 grant, so the organizer's very next
+   * action — paying the first round — failed, and said their balance was short
+   * when their dollars were untouched.
+   *
+   * Cheap when nothing is needed: GasDripper reads the balance and returns
+   * without sending if it is above the floor.
+   */
+  const topUpBeforeWrite = async () => {
+    if (!dripper || !account) return;
+    try {
+      await dripper.ensure(account);
+    } catch {
+      // Let the write itself fail and report. A top-up that could not happen
+      // is not independently worth an error on screen.
+    }
+  };
+
   const runPasskey = async (mode: "create" | "sign-in" | "discover") => {
     if (!rpId) {
       // A build problem, not a user problem: the team needs the hostname, the
@@ -244,6 +264,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
             account={account}
             canWrite={canWrite}
             deployment={deployment}
+            onBeforeWrite={topUpBeforeWrite}
             onBack={() => setCircleId(null)}
           />
         ) : tab === "Send" ? (
