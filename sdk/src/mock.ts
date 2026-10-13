@@ -5,6 +5,7 @@ import {
   type Circle,
   type ChitSigner,
   type CreateCircleArgs,
+  type CreateCircleResult,
   type DiscoveryOptions,
   type MemberStatus,
   type TxResult,
@@ -50,7 +51,10 @@ export const MOCK_TOKEN = addr("a05d");
  * to `shortAddress()`. Build for that now rather than discovering it on Sunday.
  */
 export const MOCK_PEOPLE: readonly { address: Address; name: string }[] = [
-  { address: addr("a1"), name: "You" },
+  // A real name, not "You": the screens decide who "you" is by comparing the
+  // signed-in address, so baking it into the fixture made every roster claim
+  // this person was the viewer — including on screens rendered as someone else.
+  { address: addr("a1"), name: "Kavya" },
   { address: addr("a2"), name: "Priya" },
   { address: addr("a3"), name: "Arun" },
   { address: addr("a4"), name: "Meera" },
@@ -167,12 +171,18 @@ export class MockWorld {
     return this.circles.has(circleId.toString());
   }
 
-  /** Circles `who` organized or joined — the log scan, without logs. */
+  /**
+   * Circles `who` has joined.
+   *
+   * Membership only, deliberately. The real contract stores no organizer, so it
+   * cannot report "circles you created but have not joined" either. Matching on
+   * `c.organizer` here would make the mock more capable than the chain and hide
+   * the create-then-join gap from both the tests and the screen gallery.
+   */
   idsFor(who: Address): bigint[] {
     const mine: bigint[] = [];
     for (const c of this.circles.values()) {
-      const member = c.members.some((m) => key(m) === key(who));
-      if (member || key(c.organizer) === key(who)) mine.push(c.id);
+      if (c.members.some((m) => key(m) === key(who))) mine.push(c.id);
     }
     return mine.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   }
@@ -438,8 +448,13 @@ export class MockChitCircleClient extends ChitCircleClient {
     return this.world.memberStatus(circleId, who);
   }
 
-  override async circleIdsFor(who: Address, _opts: DiscoveryOptions = {}): Promise<bigint[]> {
-    return this.world.idsFor(who);
+  /** Mirrors the real client: membership from state, plus verified `knownIds`. */
+  override async circleIdsFor(who: Address, opts: DiscoveryOptions = {}): Promise<bigint[]> {
+    const found = new Set(this.world.idsFor(who));
+    for (const id of opts.knownIds ?? []) {
+      if (this.world.has(id)) found.add(id);
+    }
+    return [...found].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   }
 
   override async circleExists(circleId: bigint): Promise<boolean> {
@@ -452,9 +467,13 @@ export class MockChitCircleClient extends ChitCircleClient {
     return null; // approvals are invisible in the real client too
   }
 
-  override async createCircle(args: CreateCircleArgs): Promise<TxResult> {
+  override async createCircle(args: CreateCircleArgs): Promise<CreateCircleResult> {
     const me = this.requireMe();
-    return this.settle(() => void this.world.createCircle(me, args));
+    let circleId = 0n;
+    const sent = await this.settle(() => {
+      circleId = this.world.createCircle(me, args);
+    });
+    return { ...sent, circleId };
   }
 
   override async join(circleId: bigint): Promise<TxResult> {

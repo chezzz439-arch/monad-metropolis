@@ -1,18 +1,51 @@
-import { getAbiItem, type Address, type Hash, type PublicClient } from "viem";
+import { parseEventLogs, type Address, type Hash, type PublicClient, type TransactionReceipt } from "viem";
 import { chitCircleAbi } from "./abi.ts";
 import {
   Mode,
   type Circle,
   type CircleView,
   type CreateCircleArgs,
+  type CreateCircleResult,
   type ChitSigner,
   type DiscoveryOptions,
   type MemberStatus,
   type TxResult,
 } from "./types.ts";
 
-const circleCreatedEvent = getAbiItem({ abi: chitCircleAbi, name: "CircleCreated" });
-const joinedEvent = getAbiItem({ abi: chitCircleAbi, name: "Joined" });
+/**
+ * Default ceiling on how many circle ids {@link ChitCircleClient.circleIdsFor}
+ * will probe in one pass. Generous for a demo; see the note there on why this
+ * is a count of circles rather than a range of blocks.
+ */
+export const DEFAULT_MAX_CIRCLES = 256;
+
+/**
+ * Membership probes in flight at once. Enough that 256 ids resolve in a few
+ * round-trips, few enough that a public RPC does not rate-limit us mid-demo.
+ */
+const PROBE_CONCURRENCY = 16;
+
+/**
+ * Run `fn` over `items`, at most `size` at a time.
+ *
+ * `Promise.all` over every id at once is what gets a public RPC to start
+ * refusing connections, and an unbounded fan-out is exactly the kind of thing
+ * that works on anvil and falls over on demo night.
+ */
+async function inBatches<T>(
+  items: readonly T[],
+  size: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  for (let i = 0; i < items.length; i += size) {
+    await Promise.all(items.slice(i, i + size).map(fn));
+  }
+}
+
+/** Internal: a {@link TxResult} that still has its receipt attached. */
+interface SentTx extends TxResult {
+  receipt: TransactionReceipt;
+}
 
 export const erc20Abi = [
   {
@@ -219,52 +252,47 @@ export class ChitCircleClient {
   // -- discovery -----------------------------------------------------------
 
   /**
-   * Scan logs in chunks. Public RPCs cap how many blocks one `eth_getLogs` may
-   * span, so a single wide query fails on a chain that has been alive a while.
-   */
-  private async scanLogs(
-    event: typeof circleCreatedEvent | typeof joinedEvent,
-    args: Record<string, unknown>,
-    opts: DiscoveryOptions = {},
-  ): Promise<readonly { args: Record<string, unknown> }[]> {
-    const from = opts.fromBlock ?? this.deployBlock;
-    const to = opts.toBlock ?? (await this.publicClient.getBlockNumber());
-    const step = opts.maxBlockRange ?? 10_000n;
-
-    const collected: { args: Record<string, unknown> }[] = [];
-    for (let start = from; start <= to; start += step) {
-      const end = start + step - 1n > to ? to : start + step - 1n;
-      const logs = await this.publicClient.getLogs({
-        address: this.address,
-        event,
-        args,
-        fromBlock: start,
-        toBlock: end,
-      } as unknown as Parameters<PublicClient["getLogs"]>[0]);
-      collected.push(...(logs as unknown as { args: Record<string, unknown> }[]));
-    }
-    return collected;
-  }
-
-  /**
-   * Circle ids `who` organized or joined, ascending.
+   * Circle ids `who` is a member of, ascending.
    *
-   * Reads `CircleCreated` and `Joined`, both of which index the member, so the
-   * RPC does the filtering. Good enough for the demo and for small real use;
-   * swap in an Envio index if a user ever has many circles.
+   * READS STATE, NOT LOGS — ON PURPOSE. This used to scan `CircleCreated` and
+   * `Joined`, which worked against a local anvil and failed on the live
+   * network: `testnet-rpc.monad.xyz` rejects any `eth_getLogs` spanning more
+   * than 100 blocks, and Monad adds ~16k blocks an hour, so a scan from the
+   * deploy block needed >1,000 chunked requests and grew worse hourly. Home
+   * showed "could not load circles" to everyone. Probing `isMember` costs one
+   * `eth_call` per circle id instead, with no range limit anywhere.
+   *
+   * The trade is O(circles in the contract) rather than O(circles you are in).
+   * That is the right shape for a demo and small real use; past a few hundred
+   * circles this wants an Envio index, which the README says plainly.
+   *
+   * Only reports circles `who` has actually *joined*. Nothing on chain links a
+   * circle to its creator — `createCircle` stores no organizer and only emits
+   * an event — so a created-but-unjoined circle arrives via
+   * {@link DiscoveryOptions.knownIds}.
    */
   async circleIdsFor(who: Address, opts: DiscoveryOptions = {}): Promise<bigint[]> {
-    const [created, joined] = await Promise.all([
-      this.scanLogs(circleCreatedEvent, { organizer: who }, opts),
-      this.scanLogs(joinedEvent, { member: who }, opts),
-    ]);
+    const next = await this.nextCircleId();
+    const window = BigInt(opts.maxCircles ?? DEFAULT_MAX_CIRCLES);
+    const first = next > window ? next - window : 0n;
 
-    const ids = new Set<bigint>();
-    for (const log of [...created, ...joined]) {
-      const id = log.args["circleId"];
-      if (typeof id === "bigint") ids.add(id);
-    }
-    return [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const candidates: bigint[] = [];
+    for (let id = first; id < next; id++) candidates.push(id);
+
+    const found = new Set<bigint>();
+    await inBatches(candidates, PROBE_CONCURRENCY, async (id) => {
+      if (await this.read<boolean>("isMember", [id, who])) found.add(id);
+    });
+
+    // Ids the caller remembers locally. Checked against the contract so a
+    // stale or hand-edited entry cannot put a circle on someone's home screen.
+    await inBatches(opts.knownIds ?? [], PROBE_CONCURRENCY, async (id) => {
+      if (found.has(id) || id < 0n || id >= next) return;
+      const circle = await this.getCircle(id);
+      if (circle.contribution > 0n) found.add(id);
+    });
+
+    return [...found].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   }
 
   /** {@link circleIdsFor}, resolved to full views. */
@@ -304,12 +332,12 @@ export class ChitCircleClient {
   // -- writes --------------------------------------------------------------
 
   /** Submit, wait for inclusion, and report how long settlement took. */
-  private async send(hash: Hash, startedAt: number): Promise<TxResult> {
-    await this.publicClient.waitForTransactionReceipt({ hash });
-    return { hash, settledInSeconds: (Date.now() - startedAt) / 1000 };
+  private async send(hash: Hash, startedAt: number): Promise<SentTx> {
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+    return { hash, settledInSeconds: (Date.now() - startedAt) / 1000, receipt };
   }
 
-  private write(functionName: string, args: readonly unknown[], noPromptAmount?: bigint): Promise<TxResult> {
+  private write(functionName: string, args: readonly unknown[], noPromptAmount?: bigint): Promise<SentTx> {
     const signer = this.requireSigner();
     const startedAt = Date.now();
     return signer
@@ -344,7 +372,15 @@ export class ChitCircleClient {
     return this.send(hash, startedAt);
   }
 
-  async createCircle(args: CreateCircleArgs): Promise<TxResult> {
+  /**
+   * Create a circle and report the id the contract assigned it.
+   *
+   * The id comes out of the `CircleCreated` log rather than a `nextCircleId()`
+   * read taken before sending: those are two separate round-trips, and anyone
+   * else's `createCircle` landing in between would hand us their id. The app
+   * then navigates the organizer into a circle that is not theirs.
+   */
+  async createCircle(args: CreateCircleArgs): Promise<CreateCircleResult> {
     const payoutOrder =
       args.payoutOrder ?? Array.from({ length: args.maxMembers }, (_, i) => i);
 
@@ -356,7 +392,7 @@ export class ChitCircleClient {
       throw new Error("payoutOrder must be a permutation of 0..maxMembers-1");
     }
 
-    return this.write("createCircle", [
+    const sent = await this.write("createCircle", [
       args.token,
       args.contribution,
       args.maxMembers,
@@ -364,6 +400,32 @@ export class ChitCircleClient {
       args.mode ?? Mode.Fixed,
       payoutOrder,
     ]);
+
+    return { hash: sent.hash, settledInSeconds: sent.settledInSeconds, circleId: this.circleIdFrom(sent.receipt) };
+  }
+
+  /**
+   * Pull the new circle's id out of a `createCircle` receipt.
+   *
+   * Filtered to this contract's own logs: decoding by topic alone would let any
+   * other contract in the same transaction that happens to share the
+   * `CircleCreated` signature supply the id.
+   */
+  private circleIdFrom(receipt: TransactionReceipt): bigint {
+    const logs = parseEventLogs({
+      abi: chitCircleAbi,
+      eventName: "CircleCreated",
+      logs: receipt.logs,
+    }).filter((log) => log.address.toLowerCase() === this.address.toLowerCase());
+
+    const id = logs[0]?.args?.circleId;
+    if (typeof id !== "bigint") {
+      throw new Error(
+        "createCircle succeeded but its receipt carried no CircleCreated log, " +
+          "so the new circle's id is unknown. Open it from your circles list.",
+      );
+    }
+    return id;
   }
 
   /** Locks a deposit of one contribution. Approves first if needed. */

@@ -187,10 +187,32 @@ test("a malformed funder key reads as not-configured rather than throwing", asyn
   }
 });
 
-test("defaults cover a full five-round circle with headroom", async () => {
-  // forge --gas-report: join 144k + 5 x contribute 92k + settle 82k +
-  // withdraw 53k = ~740k gas, ~0.074 MON at 100 gwei.
-  const wholeCircleCost = parseEther("0.074");
-  assert.ok(DEFAULT_TOP_UP_TO > wholeCircleCost * 3n, "at least 3x headroom");
+test("defaults cover the demo circle, and are honest that they stop there", async () => {
+  // forge --gas-report at the 102 gwei seen on testnet: join 0.0147,
+  // contribute 0.0094, settle 0.0084, withdraw 0.0054 MON.
+  const join = parseEther("0.0147");
+  const contribute = parseEther("0.0094");
+  const settle = parseEther("0.0084");
+
+  // What the two-minute demo actually spends: join, pay a couple of rounds,
+  // settle one. This has to fit or sign-up is pointless.
+  const demoCircleCost = join + contribute * 2n + settle;
+  assert.ok(
+    DEFAULT_TOP_UP_TO > demoCircleCost,
+    `the drip must cover the demo circle (${demoCircleCost} wei)`,
+  );
+
+  // And what it deliberately does NOT cover, so nobody raises the constant
+  // without reading why it is low: a full five-round circle is ~0.0755 MON.
+  // The funder holds a fixed amount and every sign-up takes a slice, so this
+  // trades per-account headroom for how many accounts a demo can mint.
+  assert.ok(
+    DEFAULT_TOP_UP_TO < parseEther("0.0755"),
+    "if this now covers a whole circle, update the comment on DEFAULT_TOP_UP_TO",
+  );
+
+  // The constructor rejects topUpTo <= minBalance, so every top-up sends
+  // something. Guarded here too, since both constants moved together.
+  assert.ok(DEFAULT_MIN_BALANCE > 0n);
   assert.ok(DEFAULT_MIN_BALANCE < DEFAULT_TOP_UP_TO);
 });

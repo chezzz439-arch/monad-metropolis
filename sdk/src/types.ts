@@ -64,13 +64,34 @@ export interface MemberStatus {
   payoutRound: number;
 }
 
+/**
+ * Knobs for finding the circles an account belongs to.
+ *
+ * Deliberately has no block-range fields. Discovery used to scan
+ * `CircleCreated`/`Joined` logs, which broke on Monad's public RPC: it caps
+ * `eth_getLogs` at a 100-block range, and the window from the deploy block
+ * grows by roughly 16k blocks an hour, so the scan needed over a thousand
+ * chunked requests and simply failed. Discovery reads contract state instead.
+ * See {@link import("./client.ts").ChitCircleClient.circleIdsFor}.
+ */
 export interface DiscoveryOptions {
-  /** Defaults to the client's `deployBlock`. */
-  fromBlock?: bigint;
-  /** Defaults to the current head. */
-  toBlock?: bigint;
-  /** Blocks per `eth_getLogs` call. Lower it if the RPC rejects the range. */
-  maxBlockRange?: bigint;
+  /**
+   * Circle ids the caller already knows about, kept if they turn out to exist.
+   *
+   * This covers exactly one gap: `createCircle` stores no organizer and only
+   * emits an event, so between creating a circle and joining it there is
+   * nothing on chain tying it to its creator. The app passes the ids it
+   * remembers locally; everything else is read from the contract, which is why
+   * clearing local storage still restores every circle you have joined.
+   */
+  knownIds?: readonly bigint[];
+  /**
+   * Ceiling on how many circle ids one pass inspects. When the contract holds
+   * more than this, the newest `maxCircles` are checked and older ones are
+   * not — the point at which this should read from an index (Envio) rather
+   * than probing ids one at a time. Defaults to `DEFAULT_MAX_CIRCLES`.
+   */
+  maxCircles?: number;
 }
 
 export interface CreateCircleArgs {
@@ -91,6 +112,18 @@ export interface TxResult {
   hash: Hash;
   /** Wall-clock seconds from submission to inclusion — the demo's "settled in X.Xs". */
   settledInSeconds: number;
+}
+
+/**
+ * {@link TxResult} plus the id the contract assigned.
+ *
+ * Read out of the `CircleCreated` log in the receipt, not from a
+ * `nextCircleId()` call before sending: between that read and the transaction
+ * landing, anyone else's `createCircle` would take the id we just claimed and
+ * the app would open a stranger's circle.
+ */
+export interface CreateCircleResult extends TxResult {
+  circleId: bigint;
 }
 
 /**

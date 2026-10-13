@@ -1,11 +1,12 @@
 export { chitCircleAbi } from "./abi.ts";
-export { ChitCircleClient, erc20Abi } from "./client.ts";
+export { ChitCircleClient, DEFAULT_MAX_CIRCLES, erc20Abi } from "./client.ts";
 export {
   Mode,
   type Circle,
   type CircleView,
   type ChitSigner,
   type CreateCircleArgs,
+  type CreateCircleResult,
   type DiscoveryOptions,
   type MemberStatus,
   type TxResult,

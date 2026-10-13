@@ -1,10 +1,12 @@
-import { createPublicClient, http } from "viem";
+import { createPublicClient, http, parseEther } from "viem";
 import { monadTestnet as monadTestnetChain } from "viem/chains";
 import { GasDripper, funderFromPrivateKey, isFunderKey, type Deployment } from "../../sdk/src/index";
 
 declare const process: {
   env: {
     EXPO_PUBLIC_GAS_FUNDER_KEY?: string;
+    EXPO_PUBLIC_GAS_DRIP_TOP_UP?: string;
+    EXPO_PUBLIC_GAS_DRIP_MIN?: string;
   };
 };
 
@@ -21,6 +23,29 @@ declare const process: {
  * EIP-7702 delegation — not a key on the device. See the README.
  */
 const funderKey = process.env.EXPO_PUBLIC_GAS_FUNDER_KEY?.trim();
+
+/**
+ * Drip amounts, in whole MON, overridable without a code change.
+ *
+ * Demo night is exactly when someone needs to raise the top-up (a longer
+ * circle) or lower it (the funder is running out) without waiting on a rebuild
+ * of the native app. A malformed value falls back to the SDK default rather
+ * than throwing, because a typo here should not stop sign-up working.
+ */
+function monAmount(raw: string | undefined): bigint | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  try {
+    const parsed = parseEther(value as `${number}`);
+    return parsed > 0n ? parsed : undefined;
+  } catch {
+    console.warn(`Ignoring unparseable gas drip amount ${JSON.stringify(value)}; using the default.`);
+    return undefined;
+  }
+}
+
+const topUpTo = monAmount(process.env.EXPO_PUBLIC_GAS_DRIP_TOP_UP);
+const minBalance = monAmount(process.env.EXPO_PUBLIC_GAS_DRIP_MIN);
 
 /**
  * One dripper per endpoint for the life of the process. GasDripper
@@ -43,6 +68,10 @@ export function dripperFor(deployment: Deployment): GasDripper | null {
       chain: monadTestnetChain,
       transport: http(deployment.rpcUrl),
     }),
+    // Spread rather than passed as undefined: GasDripper applies its own
+    // documented defaults when a field is absent.
+    ...(topUpTo !== undefined ? { topUpTo } : {}),
+    ...(minBalance !== undefined ? { minBalance } : {}),
   });
   cache.set(deployment.rpcUrl, dripper);
   return dripper;

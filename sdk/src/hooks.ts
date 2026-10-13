@@ -10,7 +10,13 @@ import {
 import type { Address } from "viem";
 import type { ChitCircleClient } from "./client.ts";
 import { checkInviteTarget, parseInviteLink, type InviteTarget } from "./invite.ts";
-import type { CircleView, CreateCircleArgs, DiscoveryOptions, TxResult } from "./types.ts";
+import type {
+  CircleView,
+  CreateCircleArgs,
+  CreateCircleResult,
+  DiscoveryOptions,
+  TxResult,
+} from "./types.ts";
 
 /**
  * The surface the UI consumes. Every hook returns the same shapes:
@@ -42,21 +48,26 @@ export interface ReadState<T> {
   refresh: () => void;
 }
 
-export interface WriteState<TArgs extends unknown[]> {
-  run: (...args: TArgs) => Promise<TxResult | null>;
+/**
+ * @typeParam TResult the write's own result shape. Defaults to {@link TxResult};
+ *            `useCreateCircle` narrows it so callers get the new circle's id
+ *            without a second lookup.
+ */
+export interface WriteState<TArgs extends unknown[], TResult extends TxResult = TxResult> {
+  run: (...args: TArgs) => Promise<TResult | null>;
   pending: boolean;
   error: Error | null;
-  result: TxResult | null;
+  result: TResult | null;
 }
 
 /** Wraps a write so screens get pending/error/result without boilerplate. */
-function useWrite<TArgs extends unknown[]>(
-  fn: (...args: TArgs) => Promise<TxResult>,
+function useWrite<TArgs extends unknown[], TResult extends TxResult = TxResult>(
+  fn: (...args: TArgs) => Promise<TResult>,
   onSuccess?: () => void,
-): WriteState<TArgs> {
+): WriteState<TArgs, TResult> {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [result, setResult] = useState<TxResult | null>(null);
+  const [result, setResult] = useState<TResult | null>(null);
 
   const run = useCallback(
     async (...args: TArgs) => {
@@ -183,8 +194,8 @@ export function useTokenBalance(token: Address | null, account: Address | null, 
 }
 
 /**
- * Circles this account organized or joined. Backed by an event-log scan, so it
- * is slower than {@link useCircle} — do not poll it aggressively.
+ * Circles this account belongs to. One contract read per circle id, so it is
+ * slower than {@link useCircle} — do not poll it aggressively.
  *
  * @param pollMs defaults to 0 (no polling). Call `refresh` after a create or
  *        join instead.
@@ -201,7 +212,11 @@ export function useMyCircles(
   const [tick, setTick] = useState(0);
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
-  const { fromBlock, toBlock, maxBlockRange } = opts;
+  const { maxCircles } = opts;
+  // Depend on the contents, not the array identity: callers build `knownIds`
+  // inline from local storage, so a fresh array every render would otherwise
+  // re-fire this effect forever.
+  const knownKey = (opts.knownIds ?? []).join(",");
 
   useEffect(() => {
     if (!me) {
@@ -213,7 +228,8 @@ export function useMyCircles(
 
     const load = async () => {
       try {
-        const circles = await client.myCircles(me, { fromBlock, toBlock, maxBlockRange });
+        const knownIds = knownKey ? knownKey.split(",").map(BigInt) : [];
+        const circles = await client.myCircles(me, { knownIds, maxCircles });
         if (!cancelled) {
           setData(circles);
           setError(null);
@@ -235,7 +251,7 @@ export function useMyCircles(
       cancelled = true;
       clearInterval(id);
     };
-  }, [client, me, fromBlock, toBlock, maxBlockRange, pollMs, tick]);
+  }, [client, me, knownKey, maxCircles, pollMs, tick]);
 
   return { data, loading, error, refresh };
 }
@@ -407,7 +423,7 @@ export function useRoundCountdown(
 
 // -- writes ----------------------------------------------------------------
 
-export function useCreateCircle(): WriteState<[CreateCircleArgs]> {
+export function useCreateCircle(): WriteState<[CreateCircleArgs], CreateCircleResult> {
   const client = useChitClient();
   const fn = useCallback((args: CreateCircleArgs) => client.createCircle(args), [client]);
   return useWrite(fn);

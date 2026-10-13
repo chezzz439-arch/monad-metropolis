@@ -1,6 +1,7 @@
 node_modules/
 .expo/
 dist/
-.env
-.env.*
+.vercel
+.env*
+# Last, so it wins: every other .env file is secret, this one is the template.
 !.env.example

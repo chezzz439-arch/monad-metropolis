@@ -37,6 +37,6 @@ export const configuredDeployment: Deployment | null =
         chitCircle: contractAddress as Address,
         token: tokenAddress as Address,
         deployBlock: BigInt(deployBlock),
-        inviteBaseUrl: "https://chitcircle.app",
+        inviteBaseUrl: "https://chit-circle.vercel.app",
       }
     : null;

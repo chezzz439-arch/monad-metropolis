@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Modal, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import Constants from "expo-constants";
-import { isAddress, type Address } from "viem";
+import type { Address } from "viem";
 import { CircleListScreen } from "./screens/CircleListScreen";
 import { CreateCircleScreen } from "./screens/CreateCircleScreen";
 import { LiveCircleDetailScreen } from "./screens/LiveCircleDetailScreen";
 import { SendReceiveScreen } from "./screens/SendReceiveScreen";
+import { SettingUpScreen } from "./screens/SettingUpScreen";
+import { WelcomeScreen } from "./screens/WelcomeScreen";
+import { AppBar, Avatar, Button, Logo, Screen, Skeleton, TabBar } from "./components/ui";
+import { color, radius, space, type } from "./design/tokens";
 import {
   ChitCircleProvider,
   MONAD_TESTNET_AUSD_FAUCET_ADDRESS,
@@ -20,15 +23,17 @@ import {
   type Deployment,
 } from "../sdk/src/index";
 import { clearStoredPasskeyAccount, loadStoredPasskeyAccount, saveStoredPasskeyAccount, type StoredPasskeyAccount } from "./services/passkeyStorage";
+import { circleName, loadCircleNames, rememberedCircleIds } from "./services/circleNames";
+import { clearInviteFromUrl, readInviteFromUrl, type InviteRoute } from "./services/inviteRoute";
 import { dripperFor } from "./config/funding";
 
-type Tab = "Circles" | "Activity" | "Send";
+const TABS = ["Circles", "Send"] as const;
+type Tab = (typeof TABS)[number];
 
 /** Whether the new account has been made ready to spend. */
 type SetupState = "idle" | "working" | "failed";
 
 export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
-  const [accountInput, setAccountInput] = useState("");
   const [tab, setTab] = useState<Tab>("Circles");
   const [circleId, setCircleId] = useState<bigint | null>(null);
   const [meraAccount, setMeraAccount] = useState<MeraAccount | null>(null);
@@ -37,9 +42,23 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
   const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [passkeyError, setPasskeyError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [setupState, setSetupState] = useState<SetupState>("idle");
+  const [names, setNames] = useState<Record<string, string>>({});
   const rpId = typeof Constants.expoConfig?.extra?.meraRpId === "string" ? Constants.expoConfig.extra.meraRpId : "";
-  const account = meraAccount?.address ?? (isAddress(accountInput) ? (accountInput as Address) : null);
+  const account: Address | null = meraAccount?.address ?? null;
+
+  /**
+   * The invite this page was opened with. Read once, before anything else, and
+   * held across sign-up: the passkey ceremony does not navigate away, so a
+   * visitor who arrives on /c/7 signs up and lands back on circle 7.
+   */
+  const [invite] = useState<InviteRoute>(() =>
+    readInviteFromUrl({ chainId: deployment.chainId, contract: deployment.chitCircle }),
+  );
+  const [inviteHandled, setInviteHandled] = useState(false);
+  const invitedCircleId = invite.kind === "ready" ? invite.target.circleId : null;
+  const inviteProblem = invite.kind === "unusable" ? invite.message : null;
 
   const client = useMemo(
     () => clientFor(deployment, meraAccount ? meraSigner(meraAccount, deployment.rpcUrl) : undefined),
@@ -50,6 +69,10 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
   const canWrite = Boolean(meraAccount) && setupState !== "working";
 
   useEffect(() => {
+    void loadCircleNames().then(setNames);
+  }, []);
+
+  useEffect(() => {
     if (!rpId) {
       setStorageLoaded(true);
       return;
@@ -58,7 +81,6 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
     void loadStoredPasskeyAccount(rpId).then((saved) => {
       if (!active) return;
       setStoredAccount(saved);
-      if (saved) setAccountInput(saved.address);
       setStorageLoaded(true);
     }).catch((error: unknown) => {
       if (active) {
@@ -69,11 +91,26 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
     return () => { active = false; };
   }, [rpId]);
 
+  /**
+   * Honour the invite once there is an account that can pay.
+   *
+   * An effect rather than a step inside the sign-up handler, so it also fires
+   * for someone who already had an account and just tapped the link — and so
+   * it waits out "Setting up your account…" instead of dropping them onto a
+   * Join button they cannot press yet.
+   */
+  useEffect(() => {
+    if (inviteHandled || invitedCircleId === null) return;
+    if (!account || setupState !== "idle") return;
+    setCircleId(invitedCircleId);
+    setInviteHandled(true);
+    clearInviteFromUrl();
+  }, [account, setupState, invitedCircleId, inviteHandled]);
+
   const rememberAccount = async (next: MeraAccount) => {
     const stored: StoredPasskeyAccount = { address: next.address, credentialId: next.credentialId, rpId: next.rpId };
     await saveStoredPasskeyAccount(stored);
     setStoredAccount(stored);
-    setAccountInput(next.address);
     setMeraAccount(next);
     setPasskeyError(null);
   };
@@ -100,7 +137,10 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
 
   const runPasskey = async (mode: "create" | "sign-in" | "discover") => {
     if (!rpId) {
-      setPasskeyError("Set EXPO_PUBLIC_MERA_RP_ID to an HTTPS hostname your team controls, then configure its iOS/Android association files.");
+      // A build problem, not a user problem: the team needs the hostname, the
+      // user needs a sentence they can act on.
+      console.warn("Set EXPO_PUBLIC_MERA_RP_ID to a hostname your team controls, then publish its association files.");
+      setPasskeyError("This build cannot set up accounts yet. Try again from the published app.");
       return;
     }
     setPasskeyBusy(true);
@@ -126,6 +166,8 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
     if (meraAccount) endMeraSession(meraAccount);
     setMeraAccount(null);
     setSetupState("idle");
+    setCircleId(null);
+    setAccountOpen(false);
   };
 
   const forgetAccount = async () => {
@@ -134,179 +176,186 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
     setStoredAccount(null);
   };
 
+  if (!storageLoaded) return <BootScreen />;
+
+  if (!meraAccount || !account) {
+    return (
+      <WelcomeScreen
+        returning={Boolean(storedAccount)}
+        busy={passkeyBusy}
+        error={passkeyError ?? inviteProblem}
+        invited={invitedCircleId !== null}
+        onGetStarted={() => void runPasskey("create")}
+        onSignIn={() => void runPasskey(storedAccount ? "sign-in" : "discover")}
+      />
+    );
+  }
+
+  if (setupState !== "idle") {
+    return (
+      <SettingUpScreen
+        failed={setupState === "failed"}
+        onRetry={() => void prepareAccount(account)}
+        onContinue={() => setSetupState("idle")}
+      />
+    );
+  }
+
   return (
     <ChitCircleProvider value={client}>
-      <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
-        <StatusBar barStyle="dark-content" backgroundColor="#f4f7f2" />
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.brand}>CHIT CIRCLES</Text>
-            <Text style={styles.network}>MONAD TESTNET · {meraAccount ? "PASSKEY CONNECTED" : "READ ONLY"}</Text>
-          </View>
-          <Text style={styles.chain}>10143</Text>
-        </View>
-
-        <View style={styles.setup}>
-          {!rpId ? (
-            <View style={styles.notice}>
-              <Text style={styles.noticeTitle}>Passkey domain required</Text>
-              <Text style={styles.noticeBody}>Set EXPO_PUBLIC_MERA_RP_ID to a hostname your team controls and publish the iOS/Android association files.</Text>
-            </View>
-          ) : meraAccount ? (
-            <View style={styles.accountPanel}>
-              <Text style={styles.accountLabel}>PASSKEY ACCOUNT</Text>
-              <Text selectable style={styles.accountAddress}>{meraAccount.address}</Text>
-              <Text style={styles.noticeBody}>Prompt-free contribution guard expires {meraAccount.limits.expiresAt.toLocaleTimeString()} · enforced by this app.</Text>
-              {setupState === "working" && (
-                <View style={styles.setupRow}>
-                  <ActivityIndicator color="#b8c9bd" />
-                  <Text style={styles.setupText}>Setting up your account…</Text>
-                </View>
-              )}
-              {setupState === "failed" && (
-                <View style={styles.setupRow}>
-                  <Text style={styles.setupText}>We could not finish setting up your account. You can still look around, but payments may not go through yet.</Text>
-                  <Pressable style={styles.smallButton} onPress={() => void prepareAccount(meraAccount.address)}>
-                    <Text style={styles.smallButtonText}>Try again</Text>
-                  </Pressable>
-                </View>
-              )}
-              <View style={styles.accountActions}>
-                <Pressable style={styles.smallButton} onPress={lockAccount}><Text style={styles.smallButtonText}>Lock</Text></Pressable>
-                <Pressable style={styles.smallButtonSecondary} onPress={forgetAccount}><Text style={styles.smallButtonSecondaryText}>Forget device</Text></Pressable>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.authPanel}>
-              <Text style={styles.noticeTitle}>Passkey account</Text>
-              <Text style={styles.noticeBody}>{storedAccount ? `Saved account ${storedAccount.address.slice(0, 8)}…` : "Create a passkey or sign in with one from another device."} No seed phrase or private key is stored.</Text>
-              <View style={styles.accountActions}>
-                {passkeyBusy ? <ActivityIndicator color="#32745b" /> : storedAccount ? (
-                  <Pressable style={styles.smallButton} onPress={() => void runPasskey("sign-in")}><Text style={styles.smallButtonText}>Unlock</Text></Pressable>
-                ) : (
-                  <Pressable style={styles.smallButton} onPress={() => void runPasskey("create")}><Text style={styles.smallButtonText}>Create passkey</Text></Pressable>
-                )}
-                {storedAccount && <Pressable style={styles.smallButtonSecondary} onPress={() => void runPasskey("discover")}><Text style={styles.smallButtonSecondaryText}>Use another</Text></Pressable>}
-                {!storedAccount && <Pressable style={styles.smallButtonSecondary} onPress={() => void runPasskey("discover")}><Text style={styles.smallButtonSecondaryText}>Sign in</Text></Pressable>}
-              </View>
-            </View>
-          )}
-          {passkeyError && <Text style={styles.passkeyError}>{passkeyError}</Text>}
-
-          <Text style={styles.label}>{meraAccount ? "CONNECTED ADDRESS" : "PUBLIC ACCOUNT ADDRESS"}</Text>
-          <TextInput
-            value={accountInput}
-            onChangeText={setAccountInput}
-            placeholder="0x..."
-            placeholderTextColor="#8a968e"
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!meraAccount}
-            style={styles.input}
-          />
-
-        </View>
+      <Screen>
+        <StatusBar barStyle="dark-content" backgroundColor={color.canvas} />
+        <AppBar
+          title={circleId !== null ? circleName(circleId, names) : undefined}
+          onBack={circleId !== null ? () => setCircleId(null) : undefined}
+          right={
+            <Pressable
+              onPress={() => setAccountOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Your account"
+              hitSlop={8}
+            >
+              <Avatar name="You" size={40} tone="brand" />
+            </Pressable>
+          }
+        />
 
         {circleId !== null ? (
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
-            <LiveCircleDetailScreen circleId={circleId} account={account ?? undefined} canWrite={canWrite} deployment={deployment} onBack={() => setCircleId(null)} />
-          </ScrollView>
-        ) : !account ? (
-          <ScrollView contentContainerStyle={styles.content}>
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>Enter an address to view circles</Text>
-              <Text style={styles.emptyBody}>This is a public address only. It does not connect a wallet or authorize transactions.</Text>
-            </View>
-          </ScrollView>
-        ) : tab === "Circles" ? (
-          <View style={styles.liveList}>
-            <CircleListScreen
-              myAccount={account}
-              onSelectCircle={setCircleId}
-              expectedDeployment={{ chainId: deployment.chainId, contract: deployment.chitCircle }}
-              onCreateNew={() => {
-                if (canWrite) return setCreateOpen(true);
-                if (meraAccount) return Alert.alert("Setting up your account", "This takes a moment. Try again shortly.");
-                Alert.alert("Sign in first", "Create or unlock your account before starting a circle.");
-              }}
-            />
-          </View>
+          <LiveCircleDetailScreen
+            circleId={circleId}
+            account={account}
+            canWrite={canWrite}
+            deployment={deployment}
+            onBack={() => setCircleId(null)}
+          />
         ) : tab === "Send" ? (
-          <ScrollView contentContainerStyle={styles.content}>
-            <SendReceiveScreen
-              tokenAddress={deployment.token}
-              myAccount={account}
-              faucetAddress={MONAD_TESTNET_AUSD_FAUCET_ADDRESS}
-              readOnly={!canWrite}
-            />
-          </ScrollView>
+          <SendReceiveScreen
+            tokenAddress={deployment.token}
+            myAccount={account}
+            faucetAddress={MONAD_TESTNET_AUSD_FAUCET_ADDRESS}
+            readOnly={!canWrite}
+          />
         ) : (
-          <ScrollView contentContainerStyle={styles.content}>
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>Activity history is not indexed yet</Text>
-              <Text style={styles.emptyBody}>The current SDK does not expose a transaction-history query. Circle balances and status are read live from Monad.</Text>
-            </View>
-          </ScrollView>
+          <CircleListScreen
+            myAccount={account}
+            names={names}
+            knownIds={rememberedCircleIds(names)}
+            onSelectCircle={setCircleId}
+            onCreateNew={() => setCreateOpen(true)}
+            expectedDeployment={{ chainId: deployment.chainId, contract: deployment.chitCircle }}
+          />
         )}
 
-        {circleId === null && account !== null && (
-          <View style={styles.tabs}>
-            {(["Circles", "Activity", "Send"] as const).map((item) => (
-              <Pressable key={item} onPress={() => setTab(item)} style={styles.tab} accessibilityRole="button" accessibilityState={{ selected: tab === item }}>
-                <View style={[styles.tabMark, tab === item && styles.tabMarkActive]} />
-                <Text style={[styles.tabText, tab === item && styles.tabTextActive]}>{item}</Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
-        {createOpen && meraAccount && (
+        {circleId === null ? <TabBar tabs={TABS} active={tab} onSelect={setTab} /> : null}
+
+        {createOpen ? (
           <CreateCircleScreen
             tokenAddress={deployment.token}
             onClose={() => setCreateOpen(false)}
             onCreated={(createdCircleId) => {
               setCreateOpen(false);
+              void loadCircleNames().then(setNames);
               setCircleId(createdCircleId);
             }}
           />
-        )}
-      </SafeAreaView>
+        ) : null}
+
+        <AccountSheet
+          visible={accountOpen}
+          accountId={account}
+          onClose={() => setAccountOpen(false)}
+          onLock={lockAccount}
+          onSignOut={() => void forgetAccount()}
+        />
+      </Screen>
     </ChitCircleProvider>
   );
 }
 
+/** The half-second before we know whether this device has an account. */
+function BootScreen() {
+  return (
+    <Screen>
+      <View style={styles.boot}>
+        <Logo size={120} />
+        <Skeleton width={180} height={20} />
+      </View>
+    </Screen>
+  );
+}
+
+/**
+ * The account menu. The identifier lives here and nowhere else: it is the one
+ * thing a member needs to receive money from someone outside their circles,
+ * and the one thing nobody should have to look at the rest of the time.
+ */
+function AccountSheet({
+  visible,
+  accountId,
+  onClose,
+  onLock,
+  onSignOut,
+}: {
+  visible: boolean;
+  accountId: string;
+  onClose: () => void;
+  onLock: () => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close">
+        <Pressable style={styles.sheet} onPress={() => {}}>
+          <View style={styles.handle} />
+          <View style={styles.sheetHead}>
+            <Avatar name="You" size={56} tone="brand" />
+            <View style={styles.sheetHeadText}>
+              <Text style={styles.sheetTitle}>Your account</Text>
+              <Text style={styles.sheetBody}>Protected by your face or fingerprint.</Text>
+            </View>
+          </View>
+
+          <View style={styles.idBlock}>
+            <Text style={styles.idLabel}>Your account ID</Text>
+            <Text style={styles.idValue} selectable>{accountId}</Text>
+            <Text style={styles.idHint}>Share this if someone outside your circles wants to send you money.</Text>
+          </View>
+
+          <Button label="Lock" variant="secondary" onPress={onLock} />
+          <Button label="Sign out on this device" variant="ghost" onPress={onSignOut} />
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#f4f7f2" },
-  header: { minHeight: 66, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: "#dce4dd" },
-  brand: { color: "#182821", fontSize: 14, fontWeight: "800" },
-  network: { color: "#32745b", fontSize: 9, fontWeight: "700", marginTop: 4 },
-  chain: { color: "#526159", fontSize: 11, fontWeight: "700" },
-  setup: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: 10 },
-  content: { flexGrow: 1, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 26 },
-  liveList: { flex: 1 },
-  notice: { backgroundColor: "#e8eee7", borderLeftWidth: 3, borderLeftColor: "#d28b45", padding: 12, marginBottom: 12 },
-  noticeTitle: { color: "#182821", fontSize: 12, fontWeight: "700" },
-  noticeBody: { color: "#526159", fontSize: 11, lineHeight: 16, marginTop: 4 },
-  authPanel: { backgroundColor: "#e8eee7", padding: 12, borderRadius: 6, marginBottom: 10 },
-  accountPanel: { backgroundColor: "#182821", padding: 12, borderRadius: 6, marginBottom: 10 },
-  accountLabel: { color: "#b8c9bd", fontSize: 9, fontWeight: "700" },
-  accountAddress: { color: "#fff", fontSize: 12, fontWeight: "600", marginTop: 5 },
-  accountActions: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
-  setupRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
-  setupText: { flex: 1, color: "#b8c9bd", fontSize: 11, lineHeight: 16 },
-  smallButton: { minHeight: 40, paddingHorizontal: 13, borderRadius: 4, backgroundColor: "#32745b", alignItems: "center", justifyContent: "center" },
-  smallButtonText: { color: "#fff", fontSize: 11, fontWeight: "700" },
-  smallButtonSecondary: { minHeight: 40, paddingHorizontal: 12, borderRadius: 4, borderWidth: 1, borderColor: "#b8c9bd", alignItems: "center", justifyContent: "center" },
-  smallButtonSecondaryText: { color: "#526159", fontSize: 11, fontWeight: "700" },
-  passkeyError: { color: "#b74a38", fontSize: 11, lineHeight: 15, marginBottom: 8 },
-  label: { color: "#6d7b72", fontSize: 9, fontWeight: "700", marginBottom: 6, marginTop: 6 },
-  input: { minHeight: 44, backgroundColor: "#fff", borderColor: "#dce4dd", borderWidth: 1, borderRadius: 5, paddingHorizontal: 12, color: "#182821", fontSize: 13 },
-  empty: { paddingVertical: 32, alignItems: "center" },
-  emptyTitle: { color: "#182821", fontSize: 16, fontWeight: "700", textAlign: "center" },
-  emptyBody: { color: "#6d7b72", fontSize: 12, lineHeight: 18, marginTop: 8, textAlign: "center", maxWidth: 300 },
-  tabs: { minHeight: 60, backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#dce4dd", flexDirection: "row" },
-  tab: { flex: 1, alignItems: "center", justifyContent: "center" },
-  tabMark: { width: 20, height: 3, backgroundColor: "transparent", borderRadius: 2, marginBottom: 5 },
-  tabMarkActive: { backgroundColor: "#d28b45" },
-  tabText: { color: "#6d7b72", fontSize: 10, fontWeight: "600" },
-  tabTextActive: { color: "#182821" },
+  boot: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.xxl },
+
+  backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(22, 32, 44, 0.45)" },
+  sheet: {
+    backgroundColor: color.canvas,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingHorizontal: space.xxl,
+    paddingTop: space.md,
+    paddingBottom: space.huge,
+    gap: space.md,
+  },
+  handle: { width: 44, height: 5, borderRadius: radius.pill, backgroundColor: color.line, alignSelf: "center" },
+  sheetHead: { flexDirection: "row", alignItems: "center", gap: space.lg, marginTop: space.xl, marginBottom: space.sm },
+  sheetHeadText: { flex: 1 },
+  sheetTitle: { ...type.title, color: color.ink },
+  sheetBody: { ...type.label, color: color.inkMuted, marginTop: 2 },
+
+  idBlock: {
+    backgroundColor: color.sunken,
+    borderRadius: radius.md,
+    padding: space.lg,
+    gap: space.xs,
+    marginBottom: space.sm,
+  },
+  idLabel: { ...type.caption, color: color.inkFaint },
+  idValue: { ...type.label, color: color.inkMuted },
+  idHint: { ...type.label, color: color.inkFaint, marginTop: space.xs },
 });

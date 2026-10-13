@@ -79,7 +79,7 @@ export const monadTestnet: Deployment = {
   chitCircle: "0x13ec22E7d0BF5b728549990aA852d03BCC9da73D" as Address,
   token: MONAD_TESTNET_AUSD_ADDRESS,
   deployBlock: 70523429n,
-  inviteBaseUrl: "https://chitcircle.app",
+  inviteBaseUrl: "https://chit-circle.vercel.app",
 };
 
 export function isComplete(d: Partial<Deployment>): d is Deployment {

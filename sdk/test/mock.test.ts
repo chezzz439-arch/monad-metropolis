@@ -141,19 +141,34 @@ test("empty: home screen has nothing, and create then join works end to end", as
   const c = mockClient({ scenario: "empty", ...fast });
   assert.deepEqual(await c.myCircles(MOCK_ME), []);
 
-  await c.createCircle({
+  const created = await c.createCircle({
     token: MOCK_TOKEN,
     contribution: MOCK_CONTRIBUTION,
     maxMembers: 2,
     roundSeconds: MOCK_ROUND_SECONDS,
   });
+  assert.equal(created.circleId, 0n, "the id comes back from the create itself");
 
+  // Creating is not joining. The contract stores no organizer, so until the
+  // organizer joins there is nothing on chain tying the circle to them and
+  // state-based discovery correctly finds nothing.
+  assert.deepEqual(await c.myCircles(MOCK_ME), [], "create alone does not make you a member");
+
+  // Which is why the app passes the ids it remembers locally.
+  const remembered = await c.myCircles(MOCK_ME, { knownIds: [created.circleId] });
+  assert.equal(remembered.length, 1, "a remembered id bridges create and join");
+  assert.equal(remembered[0]?.started, false);
+
+  await c.join(created.circleId);
   const mine = await c.myCircles(MOCK_ME);
-  assert.equal(mine.length, 1, "the organizer sees their own circle");
-  assert.equal(mine[0]?.started, false);
+  assert.equal(mine.length, 1, "once joined it needs no local memory at all");
 
-  await c.join(0n);
-  await assert.rejects(c.join(0n), (e: MockRevert) => e.reason === "AlreadyMember");
+  await assert.rejects(c.join(created.circleId), (e: MockRevert) => e.reason === "AlreadyMember");
+});
+
+test("a made-up remembered id cannot conjure a circle onto the home screen", async () => {
+  const c = mockClient({ scenario: "empty", ...fast });
+  assert.deepEqual(await c.myCircles(MOCK_ME, { knownIds: [41n, 42n] }), []);
 });
 
 test("a circle starts by itself when the last member joins", async () => {

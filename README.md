@@ -213,6 +213,35 @@ A production version would size the deposit to each member's full remaining
 exposure, or forfeit a defaulter's payout. We are shipping the simple version
 and saying so.
 
+## Known limitation: how we find your circles
+
+`ChitCircle` keeps no index of "circles this account is in", so the app works it
+out: it reads `nextCircleId()` and then asks `isMember(circleId, you)` for each
+id — one `eth_call` per circle, no logs involved.
+
+That is **O(circles in the contract)**, not O(circles you are in). It is the
+right shape at demo and small-group scale and the wrong shape at a real one:
+past a few hundred circles this should read from an index —
+[Envio](https://envio.dev) HyperIndex is the Monad-native option — or the
+contract should maintain a `circleIdsOf[address]` array and spend the gas. The
+`maxCircles` option on `DiscoveryOptions` bounds the work in the meantime.
+
+We did it this way because the obvious approach does not survive contact with
+the network. Discovery originally scanned `CircleCreated` and `Joined` logs from
+the deploy block. That passes against a local anvil and fails on Monad's public
+RPC, which rejects any `eth_getLogs` spanning more than 100 blocks — and the
+chain adds roughly 16,000 blocks an hour, so the scan needed over a thousand
+chunked requests and grew worse hourly. The deployed app just said "could not
+load circles". `sdk/test/discovery.test.ts` and one e2e test now fail if a future
+change reintroduces a log scan.
+
+One consequence worth knowing: `createCircle` records no organizer, so a circle
+you created but have not yet **joined** is not linked to you on chain. The app
+bridges that gap with `DiscoveryOptions.knownIds`, fed from ids remembered on the
+device — and every id is still verified against the contract, so local state can
+never invent a circle. Once you join, nothing local is needed, which is why
+clearing storage and signing in again restores everything.
+
 ## External code used
 
 All application code in this repository was written during the hackathon. We

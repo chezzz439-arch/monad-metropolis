@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { createSecp256k1SigningSession, getEvmAddress } from "@category-labs/mera";
-import { hexToBytes } from "viem";
+import { createPublicClient, hexToBytes, http, type PublicClient } from "viem";
 import { ChitCircleClient } from "../../src/client.ts";
 import { buildInviteLink, checkInviteTarget, parseInviteLink } from "../../src/invite.ts";
 import { meraSigner, type MeraAccount } from "../../src/mera.ts";
@@ -12,7 +12,7 @@ import { ACCOUNTS, anvilChain, CHAIN_ID, RPC_URL, startHarness, warp, type Harne
  * The whole chain-facing surface of the SDK, against a real chain.
  *
  * `npm test` covers pure logic. This covers what it cannot: struct decoding,
- * the allowance dance, event-log discovery, chain-time deadlines and the
+ * the allowance dance, state-based discovery, chain-time deadlines and the
  * settle path — i.e. everything that was still unverified before the testnet
  * deploy.
  *
@@ -37,7 +37,7 @@ describe("ChitCircle end to end on anvil", () => {
     assert.deepEqual(await h.client(0).circleIdsFor(h.addr(0)), []);
   });
 
-  it("creates a circle and finds it by event scan", async () => {
+  it("creates a circle and reports its id from the receipt", async () => {
     const tx = await h.client(0).createCircle({
       token: h.token,
       contribution: CONTRIBUTION,
@@ -46,6 +46,10 @@ describe("ChitCircle end to end on anvil", () => {
       mode: Mode.Fixed,
     });
     assert.match(tx.hash, /^0x[0-9a-f]{64}$/);
+
+    // Read out of the CircleCreated log, so it is the id this transaction got
+    // rather than whatever nextCircleId() happened to say beforehand.
+    assert.equal(tx.circleId, 0n);
 
     // The demo's headline number. anvil mines instantly, so anything near a
     // second here means we are timing our own receipt polling rather than the
@@ -59,10 +63,39 @@ describe("ChitCircle end to end on anvil", () => {
     assert.equal(await h.client(0).circleExists(0n), true);
     assert.equal(await h.client(0).circleExists(1n), false);
 
-    // Creating a circle puts it on the organizer's home screen before they
-    // join, because CircleCreated indexes the organizer.
-    assert.deepEqual(await h.client(0).circleIdsFor(h.addr(0)), [0n]);
+    // Creating is not joining: the contract keeps no organizer, so until the
+    // organizer joins, nothing on chain ties this circle to them. This used to
+    // come back as [0n] off a CircleCreated scan — the assertion that flaked,
+    // because it raced the log index.
+    assert.deepEqual(await h.client(0).circleIdsFor(h.addr(0)), []);
+    assert.deepEqual(await h.client(0).circleIdsFor(h.addr(0), { knownIds: [0n] }), [0n]);
     assert.deepEqual(await h.client(0).circleIdsFor(h.addr(3)), []);
+  });
+
+  it("discovery never calls eth_getLogs, however old the deploy block", async () => {
+    // The live failure this guards: Monad's public RPC caps eth_getLogs at a
+    // 100-block range, so a scan from the deploy block could not run at all.
+    // A transport spy is the only honest check — anvil would happily serve the
+    // wide range that the real network refuses.
+    const seen: string[] = [];
+    const spy = createPublicClient({
+      chain: anvilChain,
+      pollingInterval: 20,
+      transport: http(RPC_URL, {
+        onFetchRequest: async (request) => {
+          const body = await request.clone().json();
+          for (const call of [body].flat()) if (call?.method) seen.push(call.method);
+        },
+      }),
+    }) as PublicClient;
+
+    // Pretend the contract is 115k blocks old, as it is on testnet.
+    const stale = new ChitCircleClient(h.chitCircle, spy, undefined, 1n);
+    await stale.myCircles(h.addr(0), { knownIds: [0n] });
+
+    const forbidden = seen.filter((m) => m === "eth_getLogs" || m === "eth_newFilter" || m === "eth_getFilterLogs");
+    assert.deepEqual(forbidden, [], `discovery asked for logs: ${seen.join(", ")}`);
+    assert.ok(seen.includes("eth_call"), "discovery should be reading contract state");
   });
 
   it("decodes a fresh circle correctly", async () => {
@@ -140,17 +173,18 @@ describe("ChitCircle end to end on anvil", () => {
     });
   });
 
-  it("scans in chunks smaller than the chain", async () => {
-    // Force many eth_getLogs calls. If chunking were broken this either misses
-    // the circle or asks for a range the node rejects.
-    const ids = await h.client(0).circleIdsFor(h.addr(0), { maxBlockRange: 1n });
-    assert.deepEqual(ids, [0n]);
+  it("finds a joined circle with no help from local state", async () => {
+    // The demo's "clear storage, sign in, everything comes back" step. No
+    // knownIds, no deployBlock that matters — membership alone is enough.
+    const fresh = new ChitCircleClient(h.chitCircle, h.publicClient, undefined, 999_999n);
+    assert.deepEqual(await fresh.circleIdsFor(h.addr(0)), [0n]);
   });
 
-  it("honours the scan window, which is what deployBlock buys", async () => {
-    const head = await h.publicClient.getBlockNumber();
-    const ids = await h.client(0).circleIdsFor(h.addr(0), { fromBlock: head });
-    assert.deepEqual(ids, [], "a window starting after the create block finds nothing");
+  it("honours maxCircles, and says so by finding nothing", async () => {
+    // One circle exists at id 0. A window of the newest 0 ids must skip it,
+    // which proves the cap is real rather than decorative.
+    assert.deepEqual(await h.client(0).circleIdsFor(h.addr(0), { maxCircles: 0 }), []);
+    assert.deepEqual(await h.client(0).circleIdsFor(h.addr(0), { maxCircles: 1 }), [0n]);
   });
 
   it("pays everyone's contribution into the pot", async () => {

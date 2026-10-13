@@ -12,7 +12,7 @@ const CONTRACT = "0x1111111111111111111111111111111111111111" as const;
 
 test("https link round-trips", () => {
   const link = buildInviteLink(7n, { chainId: 10143, contract: CONTRACT });
-  assert.equal(link, `https://chitcircle.app/c/7?chain=10143&at=${CONTRACT}`);
+  assert.equal(link, `https://chit-circle.vercel.app/c/7?chain=10143&at=${CONTRACT}`);
 
   const target = parseInviteLink(link);
   assert.deepEqual(target, { circleId: 7n, chainId: 10143, contract: CONTRACT });
@@ -26,7 +26,7 @@ test("deep link round-trips", () => {
 });
 
 test("bare links parse without query params", () => {
-  assert.equal(parseInviteLink("https://chitcircle.app/c/0")?.circleId, 0n);
+  assert.equal(parseInviteLink("https://chit-circle.vercel.app/c/0")?.circleId, 0n);
   assert.equal(parseInviteLink("chitcircle://circle/3")?.circleId, 3n);
 });
 
@@ -45,11 +45,11 @@ test("junk returns null rather than throwing", () => {
   for (const bad of [
     "",
     "not a url",
-    "https://chitcircle.app/",
-    "https://chitcircle.app/c/",
-    "https://chitcircle.app/c/abc",
-    "https://chitcircle.app/c/-1",
-    "https://chitcircle.app/circle/7",
+    "https://chit-circle.vercel.app/",
+    "https://chit-circle.vercel.app/c/",
+    "https://chit-circle.vercel.app/c/abc",
+    "https://chit-circle.vercel.app/c/-1",
+    "https://chit-circle.vercel.app/circle/7",
     "ftp://chitcircle.app/c/7",
     "chitcircle://notcircle/7",
   ]) {
@@ -58,7 +58,7 @@ test("junk returns null rather than throwing", () => {
 });
 
 test("malformed query params are ignored, not fatal", () => {
-  const target = parseInviteLink("https://chitcircle.app/c/5?chain=abc&at=0xnope");
+  const target = parseInviteLink("https://chit-circle.vercel.app/c/5?chain=abc&at=0xnope");
   assert.deepEqual(target, { circleId: 5n });
 });
 

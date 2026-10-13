@@ -4,8 +4,8 @@
  *
  * Two forms, both parsed by {@link parseInviteLink}:
  *
- *   https://chitcircle.app/c/7?chain=10143&at=0xCONTRACT   <- shareable in WhatsApp
- *   chitcircle://circle/7?chain=10143&at=0xCONTRACT        <- app deep link
+ *   https://chit-circle.vercel.app/c/7?chain=10143&at=0xCONTRACT  <- share in WhatsApp
+ *   chitcircle://circle/7?chain=10143&at=0xCONTRACT               <- app deep link
  *
  * The https form matters: §3's distribution plan is one link dropped into an
  * existing WhatsApp group, and a custom scheme renders as dead text there.
@@ -20,13 +20,22 @@ export interface InviteTarget {
 }
 
 export interface InviteLinkOptions {
-  /** Defaults to `https://chitcircle.app`. */
+  /** Defaults to {@link DEFAULT_INVITE_BASE}. */
   baseUrl?: string;
   chainId?: number;
   contract?: `0x${string}`;
 }
 
-export const DEFAULT_INVITE_BASE = "https://chitcircle.app";
+/**
+ * Where shared links point.
+ *
+ * This is the deployed site, not a vanity domain: `chitcircle.app` is not a
+ * domain the team owns, so every invite built with it was unopenable. It also
+ * has to match the passkey rpId — WebAuthn requires the relying-party id to
+ * equal or be a suffix of the page origin, so an invite that lands on another
+ * host cannot sign anyone in.
+ */
+export const DEFAULT_INVITE_BASE = "https://chit-circle.vercel.app";
 export const INVITE_SCHEME = "chitcircle";
 
 /** Shareable https link. */

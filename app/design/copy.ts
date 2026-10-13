@@ -1,0 +1,105 @@
+/**
+ * Everything the user reads that isn't a fixed string in a screen.
+ *
+ * Two jobs. First, money and names: the chain has neither, so this is where
+ * `100000000n` becomes "$100" and a 42-character account becomes "Priya" or
+ * "Member 3". Second, errors: the data layer throws reverts, RPC failures and
+ * Mera codes, and the team guide allows exactly one friendly sentence on
+ * screen. Nothing here reaches into the SDK — it only reads what it is given.
+ */
+import { describeMeraError, formatAmount, formatCountdown, nameFor } from "../../sdk/src/index";
+
+/** `100000000n` -> `"$100"`, `100500000n` -> `"$100.50"`, `1000000000n` -> `"$1,000"`. */
+export function money(amount: bigint): string {
+  const [whole = "0", frac = ""] = formatAmount(amount).split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return frac && frac !== "00" ? `$${grouped}.${frac}` : `$${grouped}`;
+}
+
+/**
+ * What to call a member.
+ *
+ * `nameFor` only knows the demo roster, so on the live contract everyone
+ * resolves to their slot. That is the honest answer — inventing names would
+ * be worse than "Member 3" — and it keeps a 42-character account off a screen
+ * a non-technical user is reading.
+ */
+export function personName(who: string, slot: number, me?: string | null): string {
+  if (me && who.toLowerCase() === me.toLowerCase()) return "You";
+  return nameFor(who as `0x${string}`) ?? `Member ${slot + 1}`;
+}
+
+/** `"Priya"` -> `"P"`, `"Member 3"` -> `"M3"`. Fits an avatar at any size. */
+export function initials(name: string): string {
+  const words = name.trim().split(/\s+/);
+  if (words.length === 1) return (words[0] ?? "?").slice(0, 1).toUpperCase();
+  return (words[0]!.slice(0, 1) + words[1]!.slice(0, 1)).toUpperCase();
+}
+
+/**
+ * Time left in a round. Demo rounds are two minutes, so seconds matter; real
+ * circles are monthly, where a ticking clock would be absurd.
+ */
+export function timeLeft(seconds: number): string {
+  if (seconds <= 0) return "Ready now";
+  if (seconds < 3600) return `${formatCountdown(seconds)} left`;
+  const hours = Math.round(seconds / 3600);
+  if (hours < 48) return `${hours} ${hours === 1 ? "hour" : "hours"} left`;
+  return `${Math.round(hours / 24)} days left`;
+}
+
+/** `1.37` -> `"settled in 1.4s"`, the one number the demo is built around. */
+export function settledIn(seconds: number): string {
+  return `settled in ${seconds.toFixed(1)}s`;
+}
+
+/**
+ * The contract's custom errors, in words. Each one is a thing the user did or
+ * a state they are in, so each gets a sentence that says what to do next
+ * rather than what failed.
+ */
+const REVERTS: Record<string, string> = {
+  AlreadyPaid: "You have already paid this round.",
+  AlreadyMember: "You are already in this circle.",
+  AlreadyStarted: "This circle has already started, so it cannot take anyone new.",
+  AlreadyFinished: "This circle has finished.",
+  NotStarted: "This circle has not started yet. It begins when every place is filled.",
+  NotFinished: "You can take your deposit back once the last round is done.",
+  NotAMember: "You are not in this circle.",
+  CircleFull: "Every place in this circle is taken.",
+  HasDefaulted: "You missed a round in this circle, so this is no longer available to you.",
+  RoundStillOpen: "This round is still open. Everyone has until the timer runs out.",
+  NothingToWithdraw: "There is nothing left to take out here.",
+  TransferFailed: "That payment did not go through. Check your balance and try again.",
+  BadContribution: "That amount will not work. Pick a round number and try again.",
+  BadMemberCount: "A circle needs between 2 and 20 people.",
+  BadRoundLength: "Pick how long a round should last, then try again.",
+  UnknownCircle: "We could not find that circle.",
+};
+
+/** Matched against the raw message when there is no custom error to read. */
+const PATTERNS: [RegExp, string][] = [
+  [/insufficient|exceeds balance|exceeds allowance/i, "You do not have enough in your balance for this."],
+  [/rejected|denied|cancell?ed|NotAllowedError|AbortError/i, "That confirmation was cancelled. Tap again to continue."],
+  [/fetch|network|timeout|timed out|ECONN|ETIMEDOUT|socket|HTTP request failed/i, "We could not reach the network just now. Check your connection and try again."],
+  [/nonce|replacement|already known|underpriced/i, "That did not go through. Give it a moment and try again."],
+];
+
+/**
+ * One sentence, safe to render.
+ *
+ * Reverts carry their error name in the message, so a plain substring search
+ * finds it wherever viem decided to put it. Anything unrecognised falls
+ * through to Mera's own copy, which already covers the passkey codes and ends
+ * in a generic sentence — so nothing raw can reach the screen.
+ */
+export function friendlyError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  for (const [name, sentence] of Object.entries(REVERTS)) {
+    if (raw.includes(name)) return sentence;
+  }
+  for (const [pattern, sentence] of PATTERNS) {
+    if (pattern.test(raw)) return sentence;
+  }
+  return describeMeraError(error);
+}

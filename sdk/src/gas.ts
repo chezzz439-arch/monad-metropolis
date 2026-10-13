@@ -28,10 +28,31 @@ import { monadTestnet as monadTestnetChain } from "viem/chains";
  * a key the app reads at runtime. See the warning on {@link GasFunder}.
  */
 
-/** Top up when the account falls below this. ~5 writes of headroom. */
-export const DEFAULT_MIN_BALANCE = parseEther("0.05");
-/** Top up to this. Covers a full five-round circle several times over. */
-export const DEFAULT_TOP_UP_TO = parseEther("0.25");
+/**
+ * Top up when the account falls below this — roughly one `join` of headroom at
+ * 100 gwei, so an account that still has a transaction or two in it is left
+ * alone rather than being topped up on every sign-in.
+ */
+export const DEFAULT_MIN_BALANCE = parseEther("0.02");
+
+/**
+ * Top up to this.
+ *
+ * MEASURED, NOT GUESSED. At the 102 gwei seen on testnet in Oct 2026, and the
+ * `forge test --gas-report` figures below: join 0.0147, contribute 0.0094,
+ * settle 0.0084, withdraw 0.0054 MON. So 0.05 MON is ~490k gas — a join, three
+ * contributions and a settle, which covers the two-minute demo circle with
+ * room to spare.
+ *
+ * IT DOES NOT COVER A FULL FIVE-ROUND CIRCLE. That is ~740k gas, about 0.0755
+ * MON, and an account would run dry in the last round. {@link GasDripper.ensure}
+ * re-tops anything below {@link DEFAULT_MIN_BALANCE}, but the app only calls it
+ * at sign-in, so a member who stays signed in through five real rounds would
+ * stall. Raise this (see `EXPO_PUBLIC_GAS_DRIP_TOP_UP`) before running longer
+ * circles; it is deliberately low so one funded account stretches across many
+ * demo sign-ups.
+ */
+export const DEFAULT_TOP_UP_TO = parseEther("0.05");
 
 /**
  * The narrow surface the drip needs from whatever holds MON — deliberately

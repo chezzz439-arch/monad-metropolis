@@ -2,5 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "buildCommand": "npm run export:web",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "comment": "Invite links are /c/<circleId>. Expo exports a single index.html with no server-side router, so without this an invite 404s before the app ever boots. The app reads the path itself on load.",
+      "source": "/c/:circleId",
+      "destination": "/index.html"
+    }
+  ]
 }

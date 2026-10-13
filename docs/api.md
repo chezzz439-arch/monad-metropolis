@@ -247,7 +247,7 @@ A fresh device (the stateless test) does a full scan on first load anyway.
 
 ```ts
 buildInviteLink(circleId, { chainId, contract })
-// "https://chitcircle.app/c/7?chain=10143&at=0x..."
+// "https://chit-circle.vercel.app/c/7?chain=10143&at=0x..."
 
 buildDeepLink(circleId, { chainId, contract })
 // "chitcircle://circle/7?chain=10143&at=0x..."

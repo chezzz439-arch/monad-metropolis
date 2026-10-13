@@ -1,8 +1,21 @@
-import React, { useEffect, useState } from "react";
-import { Linking, View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
-import { Address, parseUnits } from "viem";
-import { useSendToMember, useTokenBalance } from "../../sdk/src/hooks";
-import { formatUsd } from "../../sdk/src/format";
+/**
+ * Sending money to someone in your circles.
+ *
+ * Picking a face is the whole design: nobody in the target audience wants to
+ * check a long string of characters before sending money to their cousin.
+ * Typing one in is still possible, folded away for the case the app cannot
+ * cover — someone you have not shared a circle with yet.
+ */
+import { useMemo, useState } from "react";
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { isAddress, type Address } from "viem";
+import { parseAmount, useMyCircles, useSendToMember, useTokenBalance } from "../../sdk/src/index";
+import { Avatar, Button, Card, ErrorNote, Field, SectionTitle, Skeleton, TextField } from "../components/ui";
+import { SuccessScreen, type Celebration } from "./SuccessScreen";
+import { color, radius, space, tap, type } from "../design/tokens";
+import { friendlyError, money, personName } from "../design/copy";
+
+const QUICK_AMOUNTS = ["25", "50", "100"];
 
 interface SendReceiveScreenProps {
   tokenAddress: Address;
@@ -12,114 +25,253 @@ interface SendReceiveScreenProps {
   readOnly?: boolean;
 }
 
-export function SendReceiveScreen({ tokenAddress, myAccount, faucetAddress, recipientDefault, readOnly = false }: SendReceiveScreenProps) {
-  const [recipient, setRecipient] = useState<string>(recipientDefault || "");
-  const [amount, setAmount] = useState<string>("");
-  const [timerSeconds, setTimerSeconds] = useState<number | null>(null);
+export function SendReceiveScreen({
+  tokenAddress,
+  myAccount,
+  faucetAddress,
+  recipientDefault,
+  readOnly = false,
+}: SendReceiveScreenProps) {
+  const [picked, setPicked] = useState<Address | null>(recipientDefault ?? null);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manual, setManual] = useState("");
+  const [amount, setAmount] = useState("");
+  const [celebration, setCelebration] = useState<Celebration | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
 
-  const { data: balance, loading: balanceLoading, error: balanceError } = useTokenBalance(tokenAddress, myAccount);
-  const { run: sendAUSD, pending, error, result } = useSendToMember();
+  const { data: balance, loading: balanceLoading } = useTokenBalance(tokenAddress, myAccount);
+  const { data: circles } = useMyCircles(myAccount);
+  const { run: send, pending, error } = useSendToMember();
 
-  useEffect(() => {
-    if (result) setTimerSeconds(result.settledInSeconds);
-  }, [result]);
+  /** Everyone you share a circle with, each listed once. */
+  const people = useMemo(() => {
+    const seen = new Map<string, { address: Address; name: string }>();
+    for (const circle of circles ?? []) {
+      circle.members.forEach((member, index) => {
+        if (member.toLowerCase() === myAccount.toLowerCase()) return;
+        if (seen.has(member.toLowerCase())) return;
+        seen.set(member.toLowerCase(), { address: member, name: personName(member, index, myAccount) });
+      });
+    }
+    return [...seen.values()];
+  }, [circles, myAccount]);
+
+  const recipient: Address | null = manualOpen
+    ? isAddress(manual.trim())
+      ? (manual.trim() as Address)
+      : null
+    : picked;
+  const recipientName = recipient
+    ? (people.find((p) => p.address.toLowerCase() === recipient.toLowerCase())?.name ?? "them")
+    : null;
+
+  let parsed: bigint | null = null;
+  try {
+    parsed = amount.trim() ? parseAmount(amount.trim()) : null;
+  } catch {
+    parsed = null;
+  }
+  const ready = Boolean(recipient && parsed && parsed > 0n && !readOnly);
 
   const handleSend = async () => {
-    if (readOnly || !recipient || !amount) return;
-    setTimerSeconds(null);
-    try {
-      const parsedAmount = parseUnits(amount, 6);
-      await sendAUSD(tokenAddress, recipient as Address, parsedAmount);
-    } catch (e) {
-      console.error("Transfer failed", e);
+    if (!recipient || !parsed) return;
+    setProblem(null);
+    if (balance !== null && parsed > balance) {
+      setProblem("That is more than you have. Try a smaller amount.");
+      return;
     }
+    const result = await send(tokenAddress, recipient, parsed);
+    if (!result) return;
+    setCelebration({
+      title: `Sent ${money(parsed)}`,
+      body: `${recipientName === "them" ? "It is on its way" : `${recipientName} has it`} already.`,
+      settledInSeconds: result.settledInSeconds,
+      reference: result.hash,
+    });
+    setAmount("");
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Send AUSD</Text>
-      
-      <View style={styles.balanceCard}>
-        <Text style={styles.label}>My AUSD Balance</Text>
-        <Text style={styles.balanceText}>
-          {balanceLoading ? "Loading..." : balanceError ? "Unavailable" : balance !== null ? formatUsd(balance) : "—"}
-        </Text>
-        {balanceError && <Text style={styles.infoText}>Balance unavailable: {balanceError.message}</Text>}
-        {faucetAddress && (
-          <TouchableOpacity
-            style={styles.faucetButton}
-            onPress={() => Linking.openURL(`https://testnet.monadscan.com/address/${faucetAddress}#code`)}
+    <>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.balance}>
+          <Text style={styles.balanceLabel}>Your balance</Text>
+          {balanceLoading && balance === null ? (
+            <Skeleton width={160} height={44} style={{ marginTop: space.sm }} />
+          ) : (
+            <Text style={styles.balanceValue}>{balance === null ? "—" : money(balance)}</Text>
+          )}
+          <Text style={styles.balanceUnit}>USD</Text>
+        </View>
+
+        {!manualOpen ? (
+          <View style={styles.block}>
+            <SectionTitle>Send to</SectionTitle>
+            {people.length === 0 ? (
+              <Card>
+                <Text style={styles.emptyPeople}>
+                  People you share a circle with will show up here. Join or start a circle first.
+                </Text>
+              </Card>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.people}>
+                {people.map((person) => {
+                  const active = picked?.toLowerCase() === person.address.toLowerCase();
+                  return (
+                    <Pressable
+                      key={person.address}
+                      onPress={() => setPicked(active ? null : person.address)}
+                      style={[styles.person, active && styles.personActive]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={`Send to ${person.name}`}
+                    >
+                      <Avatar name={person.name} size={56} tone={active ? "brand" : "neutral"} />
+                      <Text style={[styles.personName, active && styles.personNameActive]} numberOfLines={1}>
+                        {person.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+        ) : (
+          <View style={styles.block}>
+            <Field label="Their account ID" hint="Ask them to copy it from their account screen.">
+              <TextField
+                value={manual}
+                onChangeText={setManual}
+                placeholder="Paste it here"
+                autoCapitalize="none"
+                autoCorrect={false}
+                accessibilityLabel="Recipient account ID"
+              />
+            </Field>
+          </View>
+        )}
+
+        <Pressable
+          onPress={() => setManualOpen((open) => !open)}
+          style={styles.switcher}
+          accessibilityRole="button"
+        >
+          <Text style={styles.switcherText}>
+            {manualOpen ? "Pick from your circles instead" : "Send to someone not in your circles"}
+          </Text>
+        </Pressable>
+
+        <View style={styles.block}>
+          <SectionTitle>Amount</SectionTitle>
+          <View style={styles.amountRow}>
+            <Text style={styles.amountCurrency}>$</Text>
+            <TextField
+              value={amount}
+              onChangeText={setAmount}
+              placeholder="0"
+              keyboardType="decimal-pad"
+              editable={!readOnly}
+              accessibilityLabel="Amount to send"
+              style={styles.amountInput}
+            />
+          </View>
+          <View style={styles.quick}>
+            {QUICK_AMOUNTS.map((value) => (
+              <Pressable
+                key={value}
+                onPress={() => setAmount(value)}
+                style={[styles.quickChip, amount === value && styles.quickChipActive]}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.quickText, amount === value && styles.quickTextActive]}>${value}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        {problem || error ? (
+          <View style={styles.block}>
+            <ErrorNote
+              message={problem ?? friendlyError(error)}
+              onRetry={problem ? undefined : () => void handleSend()}
+            />
+          </View>
+        ) : null}
+
+        <Button
+          label={
+            parsed && recipientName && recipientName !== "them"
+              ? `Send ${money(parsed)} to ${recipientName}`
+              : parsed
+                ? `Send ${money(parsed)}`
+                : "Send"
+          }
+          onPress={() => void handleSend()}
+          loading={pending}
+          disabled={!ready}
+        />
+        <Text style={styles.confirmNote}>You will confirm with your face or fingerprint.</Text>
+
+        {faucetAddress ? (
+          <Pressable
+            onPress={() => void Linking.openURL(`https://testnet.monadscan.com/address/${faucetAddress}#code`)}
+            style={styles.topUp}
             accessibilityRole="link"
           >
-            <Text style={styles.faucetText}>Get test AUSD</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+            <Text style={styles.topUpText}>Add funds</Text>
+          </Pressable>
+        ) : null}
+      </ScrollView>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Recipient Address (0x...)"
-        value={recipient}
-        onChangeText={setRecipient}
-        placeholderTextColor="#888"
-        editable={!readOnly}
-        accessibilityLabel="Recipient address"
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Amount ($USD)"
-        keyboardType="numeric"
-        value={amount}
-        onChangeText={setAmount}
-        placeholderTextColor="#888"
-        editable={!readOnly}
-        accessibilityLabel="AUSD amount"
-      />
-
-      <TouchableOpacity 
-        style={[styles.button, (pending || readOnly) && styles.buttonDisabled]}
-        onPress={handleSend}
-        disabled={pending || readOnly}
-      >
-        {pending ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{readOnly ? "Wallet signing unavailable" : "Send Instantly"}</Text>}
-      </TouchableOpacity>
-
-      {readOnly && <Text style={styles.infoText}>Read-only mode: configure the Mera signer before sending AUSD.</Text>}
-
-      {error && <Text style={styles.errorText}>Error: {error.message}</Text>}
-
-      {result && (
-        <View style={styles.successCard}>
-          <Text style={styles.successTitle}>Transfer Successful!</Text>
-          <Text style={styles.timerText}>
-            Settled in {timerSeconds !== null ? timerSeconds.toFixed(2) : "0.0"}s 🚀
-          </Text>
-          <Text style={styles.hashText} numberOfLines={1}>
-            Tx: {result.hash}
-          </Text>
-        </View>
-      )}
-    </View>
+      <SuccessScreen celebration={celebration} onDone={() => setCelebration(null)} />
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 20, flex: 1, backgroundColor: "#fff" },
-  header: { fontSize: 24, fontWeight: "bold", marginBottom: 20, color: "#182821" },
-  balanceCard: { backgroundColor: "#182821", padding: 15, borderRadius: 7, marginBottom: 20 },
-  label: { fontSize: 14, color: "#b8c9bd" },
-  balanceText: { fontSize: 22, fontWeight: "bold", color: "#fff", marginTop: 5 },
-  input: { minHeight: 48, borderWidth: 1, borderColor: "#dce4dd", borderRadius: 5, padding: 12, marginBottom: 15, fontSize: 16, color: "#182821" },
-  button: { minHeight: 48, backgroundColor: "#32745b", padding: 15, borderRadius: 5, alignItems: "center", justifyContent: "center" },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
-  errorText: { color: "#b74a38", marginTop: 10 },
-  infoText: { color: "#6d7b72", fontSize: 12, lineHeight: 17, marginTop: 8 },
-  faucetButton: { alignSelf: "flex-start", minHeight: 44, justifyContent: "center", marginTop: 8, paddingHorizontal: 4 },
-  faucetText: { color: "#32745b", fontSize: 12, fontWeight: "700" },
-  successCard: { marginTop: 20, backgroundColor: "#e8eee7", padding: 15, borderRadius: 7, borderColor: "#32745b", borderWidth: 1 },
-  successTitle: { fontWeight: "bold", color: "#182821", fontSize: 16 },
-  timerText: { fontSize: 18, fontWeight: "bold", color: "#32745b", marginTop: 5 },
-  hashText: { fontSize: 12, color: "#6d7b72", marginTop: 8 }
+  content: { paddingHorizontal: space.xl, paddingBottom: space.huge },
+
+  balance: {
+    backgroundColor: color.brand,
+    borderRadius: radius.xl,
+    padding: space.xxl,
+    marginBottom: space.xxl,
+  },
+  balanceLabel: { ...type.label, color: "#A9BBD6" },
+  balanceValue: { ...type.hero, color: color.onBrand, marginTop: space.xs },
+  balanceUnit: { ...type.caption, color: "#A9BBD6", marginTop: space.xs },
+
+  block: { marginBottom: space.xl },
+  emptyPeople: { ...type.body, color: color.inkMuted },
+
+  people: { gap: space.lg, paddingRight: space.xl },
+  person: { alignItems: "center", width: 76, gap: space.sm, paddingVertical: space.sm, borderRadius: radius.md },
+  personActive: { backgroundColor: color.brandSoft },
+  personName: { ...type.label, color: color.inkMuted, maxWidth: 72, textAlign: "center" },
+  personNameActive: { color: color.brand, fontWeight: "700" },
+
+  switcher: { minHeight: tap.min, justifyContent: "center", marginBottom: space.sm },
+  switcherText: { ...type.label, color: color.brand, textDecorationLine: "underline" },
+
+  amountRow: { flexDirection: "row", alignItems: "center", gap: space.sm },
+  amountCurrency: { ...type.display, color: color.inkMuted },
+  amountInput: { flex: 1, minWidth: 0, minHeight: 64, ...type.display, color: color.ink },
+  quick: { flexDirection: "row", gap: space.md, marginTop: space.lg },
+  quickChip: {
+    minHeight: tap.min,
+    paddingHorizontal: space.xl,
+    borderRadius: radius.pill,
+    backgroundColor: color.surface,
+    borderWidth: 1,
+    borderColor: color.line,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickChipActive: { backgroundColor: color.brand, borderColor: color.brand },
+  quickText: { ...type.bodyStrong, color: color.inkMuted },
+  quickTextActive: { color: color.onBrand },
+
+  confirmNote: { ...type.label, color: color.inkFaint, textAlign: "center", marginTop: space.md },
+  topUp: { minHeight: tap.min, alignItems: "center", justifyContent: "center", marginTop: space.xl },
+  topUpText: { ...type.label, color: color.inkFaint, textDecorationLine: "underline" },
 });
