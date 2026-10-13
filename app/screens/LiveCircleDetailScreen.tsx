@@ -12,7 +12,7 @@ import type { Address } from "viem";
 import {
   buildInviteLink,
   useChitClient,
-  useCircle,
+  useLiveCircle,
   useContribute,
   useJoinCircle,
   usePrimaryAction,
@@ -23,6 +23,7 @@ import {
 } from "../../sdk/src/index";
 import type { Deployment } from "../../sdk/src/config";
 import { Avatar, Button, Card, Chip, Divider, ErrorNote, ProgressDots, SectionTitle, Skeleton } from "../components/ui";
+import { JustNow } from "../components/JustNow";
 import { SuccessScreen, type Celebration } from "./SuccessScreen";
 import { color, radius, space, tap, type } from "../design/tokens";
 import { friendlyError, money, personName, timeLeft } from "../design/copy";
@@ -45,10 +46,11 @@ export function LiveCircleDetailScreen({
   onBack: () => void;
 }) {
   const client = useChitClient();
-  // 8s rather than the 4s default: every poll costs a handful of contract
-  // reads and the public RPC meters calls, not requests. A round is minutes
-  // long and the countdown ticks locally, so nothing on screen looks stale.
-  const { data: circle, loading, error, refresh } = useCircle(circleId, account, 8000);
+  // One cheap call a second watching for someone else's move, with the
+  // expensive read only when something actually changed. See useLiveCircle:
+  // this is both faster to react and cheaper than the 8s full poll it
+  // replaced, which matters because the RPC meters calls, not requests.
+  const { data: circle, loading, error, refresh, changedAt } = useLiveCircle(circleId, account);
   const join = useJoinCircle(refresh);
   const contribute = useContribute(refresh);
   const settle = useSettleRound(refresh);
@@ -220,6 +222,7 @@ export function LiveCircleDetailScreen({
             </Text>
           )}
         </View>
+        <JustNow at={changedAt} />
 
         {/* Who gets it */}
         {recipientName && !circle.finished ? (

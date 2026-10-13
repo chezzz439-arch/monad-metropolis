@@ -27,6 +27,7 @@ export {
   ChitCircleProvider,
   useChitClient,
   useCircle,
+  useLiveCircle,
   useContribute,
   useCreateCircle,
   useInvite,

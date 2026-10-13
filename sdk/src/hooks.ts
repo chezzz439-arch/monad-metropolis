@@ -146,6 +146,91 @@ export function useCircle(circleId: bigint | null, me?: Address, pollMs = 4000):
   return { data, loading, error, refresh };
 }
 
+/** `pot:round:started:finished` — everything a payment or a settle moves. */
+function fingerprintOf(circle: Pick<CircleView, "pot" | "round" | "started" | "finished">): string {
+  return `${circle.pot}:${circle.round}:${circle.started}:${circle.finished}`;
+}
+
+/**
+ * A circle that keeps up with the other members, in about a second.
+ *
+ * TWO CADENCES, BECAUSE ONE DOES NOT FIT. Polling the whole view every second
+ * is the obvious implementation and it does not work here: a full read is
+ * about fourteen contract calls, Monad's public RPC meters calls rather than
+ * HTTP requests, and we measured 429s well below that rate. Batching does not
+ * help — it was tried, and three batches of twenty were refused where twelve
+ * single requests went through.
+ *
+ * So the fast loop reads `getCircle`, which is exactly ONE call and carries
+ * everything a payment or a settlement moves: the pot, the round, and the two
+ * lifecycle flags. Only when that fingerprint changes does the expensive read
+ * run. Steady state is cheaper than the 8-second full poll it replaces — about
+ * 1.5 calls a second against 1.75 — while reacting roughly eight times faster.
+ *
+ * What the probe deliberately misses is somebody joining a circle that is not
+ * yet full, which moves neither pot nor round. That is what `fullMs` is for.
+ * Nobody is watching a half-empty circle for a sub-second update; they are
+ * watching a live round.
+ *
+ * @returns the usual read state plus `changedAt`, a timestamp set only when
+ *          the probe caught someone *else's* move — your own writes refresh
+ *          through `refresh()` and update the fingerprint first, so they do
+ *          not announce themselves back to you.
+ */
+export function useLiveCircle(
+  circleId: bigint | null,
+  me?: Address,
+  opts: { probeMs?: number; fullMs?: number } = {},
+): ReadState<CircleView> & { changedAt: number | null } {
+  const probeMs = opts.probeMs ?? 1200;
+  const fullMs = opts.fullMs ?? 20000;
+  const client = useChitClient();
+  const base = useCircle(circleId, me, fullMs);
+  const { data, refresh } = base;
+  const [changedAt, setChangedAt] = useState<number | null>(null);
+  const fingerprint = useRef<string | null>(null);
+
+  // Keep the probe's idea of "current" in step with the full read, so an
+  // action you took yourself does not come back as someone else's news.
+  useEffect(() => {
+    if (data) fingerprint.current = fingerprintOf(data);
+  }, [data]);
+
+  useEffect(() => {
+    if (circleId === null || probeMs <= 0) return;
+    let cancelled = false;
+
+    const probe = async () => {
+      try {
+        const circle = await client.getCircle(circleId);
+        if (cancelled) return;
+        const next = fingerprintOf(circle);
+        // First probe only learns the current value; it is not news.
+        if (fingerprint.current === null) {
+          fingerprint.current = next;
+          return;
+        }
+        if (next === fingerprint.current) return;
+        fingerprint.current = next;
+        setChangedAt(Date.now());
+        refresh();
+      } catch {
+        // A probe is a convenience and its failures are not worth reporting:
+        // the full read owns the error state, and surfacing a single refused
+        // call here would put "something went wrong" under a working circle.
+      }
+    };
+
+    const id = setInterval(probe, probeMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [client, circleId, probeMs, refresh]);
+
+  return { ...base, changedAt };
+}
+
 /** AUSD balance for the header. */
 export function useTokenBalance(token: Address | null, account: Address | null, pollMs = 6000): ReadState<bigint> {
   const client = useChitClient();
