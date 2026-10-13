@@ -1,6 +1,5 @@
-import { createPublicClient, http, parseEther, parseUnits } from "viem";
-import { monadTestnet as monadTestnetChain } from "viem/chains";
-import { GasDripper, erc20Abi, funderFromPrivateKey, isFunderKey, type Deployment } from "../../sdk/src/index";
+import { parseEther, parseUnits } from "viem";
+import { GasDripper, funderFromPrivateKey, gasChainReader, isFunderKey, type Deployment } from "../../sdk/src/index";
 
 declare const process: {
   env: {
@@ -84,24 +83,11 @@ export function dripperFor(deployment: Deployment): GasDripper | null {
   const existing = cache.get(deployment.rpcUrl);
   if (existing) return existing;
 
-  const publicClient = createPublicClient({
-    chain: monadTestnetChain,
-    transport: http(deployment.rpcUrl),
-  });
-
   const dripper = new GasDripper({
     funder: funderFromPrivateKey(funderKey, deployment.rpcUrl),
-    publicClient: {
-      getBalance: (args) => publicClient.getBalance(args),
-      waitForTransactionReceipt: (args) => publicClient.waitForTransactionReceipt(args),
-      getTokenBalance: ({ token, address }) =>
-        publicClient.readContract({
-          address: token,
-          abi: erc20Abi,
-          functionName: "balanceOf",
-          args: [address],
-        }) as Promise<bigint>,
-    },
+    // Built by the SDK so the pacing and the gentler receipt polling come with
+    // it, and so only one copy of viem is involved.
+    publicClient: gasChainReader(deployment.rpcUrl),
     // The dripper pays out test dollars from its own stock, filled from the
     // faucet by hand ahead of the demo. The faucet is never called per user:
     // its 60-second cooldown is global, so a queue of judges would serialise.

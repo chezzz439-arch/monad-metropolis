@@ -1,6 +1,7 @@
-import { createWalletClient, formatEther, http, parseEther, type Address, type Hash } from "viem";
+import { createPublicClient, createWalletClient, formatEther, http, parseEther, type Address, type Hash } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { erc20Abi } from "./client.ts";
+import { RECEIPT_POLL_MS, RPC_CALLS_PER_SECOND, paced } from "./config.ts";
 // Aliased: this package already exports a `monadTestnet` *deployment* config.
 import { monadTestnet as monadTestnetChain } from "viem/chains";
 
@@ -157,6 +158,37 @@ export function isFunderKey(value: string | null | undefined): value is `0x${str
   return typeof value === "string" && /^0x[0-9a-f]{64}$/i.test(value) && !/^0x0+$/.test(value);
 }
 
+/**
+ * The chain reader the dripper needs, built here rather than by the app.
+ *
+ * Keeping every viem client inside the SDK means one copy of viem decides what
+ * a Transport is. The app resolves its own, and handing a transport across that
+ * boundary is a type error for reasons that have nothing to do with this code.
+ * It also means the pacing and the gentler receipt polling cannot be forgotten
+ * by a caller.
+ */
+export function gasChainReader(rpcUrl: string): GasChainReader {
+  const client = createPublicClient({
+    chain: monadTestnetChain,
+    transport: paced(http(rpcUrl), RPC_CALLS_PER_SECOND, rpcUrl),
+    // Receipt polling is one call per tick, and setup waits on two receipts.
+    // 250ms is right for timing a write; here it only spends the budget.
+    pollingInterval: RECEIPT_POLL_MS * 4,
+  });
+
+  return {
+    getBalance: (args) => client.getBalance(args),
+    waitForTransactionReceipt: (args) => client.waitForTransactionReceipt(args),
+    getTokenBalance: ({ token, address }) =>
+      client.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [address],
+      }) as Promise<bigint>,
+  };
+}
+
 export function funderFromPrivateKey(
   privateKey: `0x${string}`,
   rpcUrl = "https://testnet-rpc.monad.xyz",
@@ -165,7 +197,10 @@ export function funderFromPrivateKey(
   const wallet = createWalletClient({
     account,
     chain: monadTestnetChain,
-    transport: http(rpcUrl),
+    // Same shared rate window as every other client pointed at this endpoint.
+    // The funder sends two transactions during sign-up, each ~5 calls, at the
+    // exact moment the app is also reading — and the RPC counts the lot.
+    transport: paced(http(rpcUrl), RPC_CALLS_PER_SECOND, rpcUrl),
   });
 
   return {

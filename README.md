@@ -96,15 +96,25 @@ sponsoring contract), not a key on the device. Leave the variable blank and the
 app runs without funding; `sdk/src/gas.ts` documents the thresholds and the
 measured per-circle cost.
 
-**Network fees are funded; spending money is not.** The drip covers the fee to
-transact, not the $100 a circle asks for. A brand-new account therefore has a
-zero AUSD balance and cannot join anything until it is topped up, and the only
-self-serve route is Agora's faucet, whose 60-second cooldown is global to the
-faucet rather than per account — so a group cannot all claim at once. **Fund the
-accounts you intend to demo with before you demo**, by sending them AUSD from an
-account that already holds some; waiting on the faucet in front of an audience
-is not a plan. A paymaster plus a sponsored first deposit is the real fix and is
-not in this submission.
+**Both the network fee and the money are funded.** Funding gas alone was not
+enough: a new account could pay the fee and still not join, because joining
+costs a $100 deposit and a fresh account holds zero AUSD. So the same drip also
+sends **$500 of test AUSD** (`EXPO_PUBLIC_DOLLAR_GRANT`, in whole dollars) —
+five deposits, enough to join, pay every round, and still send some to a friend.
+
+The faucet is **never called per user.** Agora's faucet has a 60-second cooldown
+that is global to the faucet rather than per account, so a queue of judges would
+serialise behind each other and most would wait. It is drained into the dripper
+by hand before a demo instead — `requestFunds(address)` pays $10,000 a call, and
+the dripper pays out from its own stock.
+
+Dollars fail soft; gas fails hard. Without gas nothing works at all, so that
+still throws. An account with gas but no money can sign in, look around, and be
+topped up by a teammate — so if the dripper runs dry, setup says so in a
+sentence and finishes anyway.
+
+A paymaster plus a sponsored first deposit is still the real answer, and is not
+in this submission.
 
 The app stores only the passkey credential ID and derived public address in
 SecureStore. PRF output, seed, and private-key bytes are not persisted. Clearing
@@ -247,17 +257,40 @@ change reintroduces a log scan.
 
 ### Read budget
 
-The same RPC also rate-limits, and it counts **JSON-RPC calls, not HTTP
-requests** — measured: single requests go through 12 for 12, while three
-batches of twenty in a row earn an HTTP 429. Batching is still on (it is free),
-but it is not a way to buy more calls; it only makes each refusal more
-expensive. Keeping the count down is the actual lever, so a circle screen costs
-about 14 reads per poll at 8s rather than the 23 per 4s it started at:
-`rosterFrom()` builds the member list from the `CircleView` already in hand, and
-`isMember`/`paidThisRound` are derived from `members`/`outstanding` instead of
-being asked for again.
+The same RPC allows **15 JSON-RPC calls a second**, counting *calls, not HTTP
+requests* — so a batch of twenty is twenty, and batching buys no headroom. That
+took a while to learn, because the refusal does not look like one. It arrives as
+**HTTP 200** carrying:
 
-If you are demoing this and seeing "the network is busy", point
+```json
+{"jsonrpc":"2.0","id":42,"error":{"code":-32011,"message":"requests limited to 15/sec"}}
+```
+
+Nothing logs that as a failure. A brand-new account's first screen said
+"Something went wrong" with an empty console and no failed request anywhere in
+devtools; it was found by dumping response bodies during sign-up.
+
+So the transport paces itself — `paced` in `sdk/src/config.ts`, a sliding window
+at 10 a second. Three things about it are load-bearing:
+
+- **Sliding, not fixed.** A fixed window lets a burst at the end of one second
+  and another at the start of the next through at twice the rate — which is
+  exactly the traffic a screen makes when it mounts.
+- **Shared between clients.** Reads go through the public client, writes through
+  the signer's wallet client, and viem issues about five calls for one write.
+  Two separate pacers each assumed they owned the whole ceiling and a join still
+  failed on the live site. The window is module-level, keyed by endpoint.
+- **Queued, not dropped.** Every call is something a screen is waiting on.
+
+Read volume still matters and is kept low. `rosterFrom()` builds the member list
+from the `CircleView` already in hand, and `isMember`/`paidThisRound` come from
+`members`/`outstanding` rather than being asked for again. The circle screen
+watches for other members' moves with a **single** `getCircle` call a second,
+and only pays for the full read when the pot or the round actually moves — see
+`useLiveCircle`, which is both faster to react and cheaper than the 8-second
+full poll it replaced.
+
+If you are demoing this and still see "the network is busy", point
 `EXPO_PUBLIC_MONAD_RPC_URL` at a dedicated endpoint rather than the public one.
 
 One consequence worth knowing: `createCircle` records no organizer, so a circle
