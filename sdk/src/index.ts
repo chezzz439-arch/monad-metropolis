@@ -12,6 +12,8 @@ export {
 } from "./types.ts";
 export {
   ANVIL_CHAIN_ID,
+  AUSD_FAUCET_TESTNET,
+  AUSD_TESTNET,
   MONAD_TESTNET_CHAIN_ID,
   RECEIPT_POLL_MS,
   clientFor,
@@ -61,6 +63,32 @@ export {
   parseAmount,
   shortAddress,
 } from "./format.ts";
+export {
+  DEFAULT_MIN_BALANCE,
+  DEFAULT_TOP_UP_TO,
+  FunderEmptyError,
+  GasDripper,
+  funderFromPrivateKey,
+  type GasChainReader,
+  type GasDripConfig,
+  type GasDripResult,
+  type GasFunder,
+} from "./gas.ts";
+export {
+  MOCK_CONTRIBUTION,
+  MOCK_ME,
+  MOCK_PEOPLE,
+  MOCK_ROUND_SECONDS,
+  MOCK_TOKEN,
+  MockChitCircleClient,
+  MockRevert,
+  MockWorld,
+  SCENARIOS,
+  mockClient,
+  nameFor,
+  type MockClientOptions,
+  type ScenarioName,
+} from "./mock.ts";
 export {
   deriveBidSecret,
   meraSigner,

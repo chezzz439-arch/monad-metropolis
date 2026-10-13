@@ -40,6 +40,25 @@ export interface MeraAccount {
 /**
  * TODO(kaushik): one passkey ceremony -> an account, no seed phrase, no email
  * code. This is the Agora bounty's required onboarding step.
+ *
+ * Confirmed from the docs on 11 Oct 2026, so build to these:
+ *   createPasskeyWithPrfOutput({ rp, user, prfSalt? }) -> { prfOutput }
+ *   createSecp256k1SigningSession({ privateKey }) -> session.signDigest(digest32)
+ * The key is derived from `prfOutput` via BIP-39/BIP-32 (m/44'/60'/0'/0/0), so
+ * the account is an ordinary EOA.
+ *
+ * BECAUSE IT IS AN EOA, IT PAYS ITS OWN GAS. A new account has nothing, and the
+ * demo creates accounts on camera, so seed it before its first write:
+ *
+ * ```ts
+ * const account = await signInWithPasskey();
+ * await dripper.ensure(account.address);   // see ./gas.ts
+ * ```
+ *
+ * `GasDripper` is finished and tested; it is only waiting on this function to
+ * return a real address. If Mera turns out to offer sponsored transactions,
+ * drop the drip and say so — but do not ship onboarding that dead-ends on an
+ * unfunded account.
  */
 export async function signInWithPasskey(): Promise<MeraAccount> {
   throw new Error("Not implemented: wire Mera passkey onboarding (see links in mera.ts)");
