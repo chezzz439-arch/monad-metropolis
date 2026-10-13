@@ -3,6 +3,7 @@ import { ChitCircleClient } from "./client.ts";
 import {
   Mode,
   type Circle,
+  type CircleView,
   type ChitSigner,
   type CreateCircleArgs,
   type CreateCircleResult,
@@ -446,6 +447,14 @@ export class MockChitCircleClient extends ChitCircleClient {
 
   override async getMemberStatus(circleId: bigint, who: Address): Promise<MemberStatus> {
     return this.world.memberStatus(circleId, who);
+  }
+
+  /**
+   * The real one issues raw contract reads to keep its call count down, which
+   * there is no chain here to answer, so this routes back through the world.
+   */
+  override async rosterFrom(view: CircleView): Promise<MemberStatus[]> {
+    return Promise.all(view.members.map((who) => this.world.memberStatus(view.circleId, who)));
   }
 
   /** Mirrors the real client: membership from state, plus verified `knownIds`. */

@@ -45,7 +45,10 @@ export function LiveCircleDetailScreen({
   onBack: () => void;
 }) {
   const client = useChitClient();
-  const { data: circle, loading, error, refresh } = useCircle(circleId, account);
+  // 8s rather than the 4s default: every poll costs a handful of contract
+  // reads and the public RPC meters calls, not requests. A round is minutes
+  // long and the countdown ticks locally, so nothing on screen looks stale.
+  const { data: circle, loading, error, refresh } = useCircle(circleId, account, 8000);
   const join = useJoinCircle(refresh);
   const contribute = useContribute(refresh);
   const settle = useSettleRound(refresh);
@@ -73,7 +76,10 @@ export function LiveCircleDetailScreen({
     let active = true;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
-    client.getRoster(circleId).then((members) => {
+    if (!circle) return;
+    // Built from the view we already loaded, rather than re-reading the whole
+    // circle a second time just to list its members.
+    client.rosterFrom(circle).then((members) => {
       if (!active) return;
       setRoster(members);
       setRosterError(null);
@@ -87,7 +93,10 @@ export function LiveCircleDetailScreen({
       active = false;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [client, circleId, circle?.round, circle?.members.length, retry]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `circle` is a new
+    // object every poll; keying on what actually changes avoids refetching the
+    // roster 8 times a minute for nothing.
+  }, [client, circleId, circle?.round, circle?.members.length, circle?.outstanding.length, retry]);
 
   const nameOf = (who: Address) => {
     const slot = circle?.members.findIndex((m) => m.toLowerCase() === who.toLowerCase()) ?? -1;

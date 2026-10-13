@@ -308,13 +308,45 @@ export class ChitCircleClient {
 
   /** Members of a circle, each with their status — for the roster screen. */
   async getRoster(circleId: bigint): Promise<MemberStatus[]> {
-    const [circle, members, payoutOrder] = await Promise.all([
-      this.getCircle(circleId),
-      this.getMembers(circleId),
-      this.getPayoutOrder(circleId),
-    ]);
+    const view = await this.getCircleView(circleId);
+    return this.rosterFrom(view);
+  }
+
+  /**
+   * The roster, built from a {@link CircleView} the caller already has.
+   *
+   * Exists because the public RPC meters JSON-RPC calls rather than HTTP
+   * requests, so batching them changed nothing and the circle screen was
+   * spending ~23 calls a poll — ten for the view, thirteen to re-read the same
+   * circle for the roster — and earned a 429 that blanked the screen.
+   *
+   * Two of the five reads per member are already answered by the view:
+   * `isMember` is "are they in `members`", and `paidThisRound` is "are they
+   * absent from `outstanding`", which is exactly what the contract's
+   * `outstanding` returns. That leaves three genuine reads each.
+   */
+  async rosterFrom(view: CircleView): Promise<MemberStatus[]> {
+    const owing = new Set(view.outstanding.map((a) => a.toLowerCase()));
+
     return Promise.all(
-      members.map((m) => this.getMemberStatus(circleId, m, circle, members, payoutOrder)),
+      view.members.map(async (who, slot) => {
+        const [deposit, defaulted, depositWithdrawn] = await Promise.all([
+          this.read<bigint>("depositOf", [view.circleId, who]),
+          this.read<boolean>("defaulted", [view.circleId, who]),
+          this.read<boolean>("depositWithdrawn", [view.circleId, who]),
+        ]);
+
+        return {
+          address: who,
+          isMember: true, // they are in `members`, which is the contract's own answer
+          deposit,
+          defaulted,
+          depositWithdrawn,
+          paidThisRound: !owing.has(who.toLowerCase()),
+          slot,
+          payoutRound: view.payoutOrder.indexOf(slot),
+        } satisfies MemberStatus;
+      }),
     );
   }
 
