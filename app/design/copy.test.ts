@@ -24,9 +24,30 @@ test("running out of fee money is not reported as running out of money", () => {
   assert.doesNotMatch(message, BANNED);
 });
 
+test("viem's own wordings for a fee shortfall are all recognised", () => {
+  // Every shape viem actually produces. The class name is one word, which is
+  // what defeated the first version of this pattern and sent a fee problem to
+  // the money sentence.
+  for (const raw of [
+    "InsufficientFundsError: The total cost of executing this transaction exceeds the balance of the account.",
+    "The total cost (gas * gas fee + value) of executing this transaction exceeds the balance of the account.",
+    "insufficient funds for gas * price + value",
+    "err: insufficient funds for transfer",
+    "out of gas",
+  ]) {
+    assert.match(friendlyError(new Error(raw)), /topped up/i, `missed: ${raw}`);
+  }
+});
+
 test("an actual shortfall still reads as one", () => {
-  const broke = new Error("ERC20: transfer amount exceeds balance");
-  assert.match(friendlyError(broke), /enough in your balance/i);
+  // Must NOT be swallowed by the fee pattern above: this one really is the
+  // user's money, and telling them to wait would be a lie.
+  for (const raw of [
+    "ERC20: transfer amount exceeds balance",
+    "execution reverted: ERC20InsufficientBalance",
+  ]) {
+    assert.match(friendlyError(new Error(raw)), /enough in your balance/i, `wrong copy for: ${raw}`);
+  }
 });
 
 test("Monad's rate limit reads as a busy network", () => {

@@ -85,7 +85,14 @@ const PATTERNS: [RegExp, string][] = [
   // their fee allowance creating and joining a circle was told their balance
   // was short while their $400 sat untouched. The app tops accounts up itself,
   // so the honest instruction is to wait a moment, not to go and find funds.
-  [/insufficient funds|funds for gas|gas \* price|out of gas/i,
+  // Matching viem's wordings specifically, not just the word "insufficient".
+  // Its class name is `InsufficientFundsError` — one word, no space — so a
+  // pattern looking for "insufficient funds" misses it and the generic balance
+  // line below catches it instead, which is how this was reported as a money
+  // problem in the first place. "exceeds the balance of the account" is viem's
+  // phrasing for the fee case and is deliberately distinct from ERC-20's
+  // "transfer amount exceeds balance", which really is a money problem.
+  [/insufficient ?funds|funds for gas|gas \* (price|gas fee)|exceeds the balance of the account|out of gas/i,
     "Your account is being topped up. Give it a few seconds and try again."],
   [/insufficient|exceeds balance|exceeds allowance/i, "You do not have enough in your balance for this."],
   [/rejected|denied|cancell?ed|NotAllowedError|AbortError/i, "That confirmation was cancelled. Tap again to continue."],
