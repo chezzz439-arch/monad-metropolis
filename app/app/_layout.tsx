@@ -3,6 +3,13 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
+import {
+  ChitCircleProvider,
+  clientFor,
+  monadTestnet,
+  requireDeployment,
+} from '@chitcircle/sdk';
+
 
 import { useColorScheme } from '@/components/useColorScheme';
 
@@ -18,6 +25,17 @@ export const unstable_settings = {
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
+
+
+const sdkReady = Boolean(
+  monadTestnet.chitCircle &&
+  monadTestnet.token &&
+  monadTestnet.deployBlock !== undefined
+);
+
+const chitClient = sdkReady
+  ? clientFor(requireDeployment(monadTestnet))
+  : null;
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
@@ -42,15 +60,35 @@ export default function RootLayout() {
   return <RootLayoutNav />;
 }
 
+
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
 
+  const navigation = (
+    <Stack>
+      <Stack.Screen
+        name="(tabs)"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="modal"
+        options={{ presentation: 'modal' }}
+      />
+    </Stack>
+  );
+
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
+    <ThemeProvider
+      value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}
+    >
+      {chitClient ? (
+        <ChitCircleProvider value={chitClient}>
+          {navigation}
+        </ChitCircleProvider>
+      ) : (
+        navigation
+      )}
     </ThemeProvider>
   );
 }
+
