@@ -57,8 +57,28 @@ test("a member who has paid waits on the others", () => {
   assert.equal(action.label, "1 still to pay");
 });
 
-test("a past deadline lets a member settle", () => {
-  assert.equal(primaryActionFor(circle({ settleable: true })).kind, "settle");
+test("a past deadline lets a paid-up member settle", () => {
+  const paid = circle({ settleable: true, me: member({ paidThisRound: true }), outstanding: [OTHER] });
+  assert.equal(primaryActionFor(paid).kind, "settle");
+});
+
+// Found on the live site. A round timer ran out while a payment was in flight,
+// and the screen replaced "Pay $100" with "Settle round" underneath the person
+// who still owed — the one button that would seize their own deposit and mark
+// them defaulted. The contract puts no deadline on `contribute`, so paying is
+// still open to them and must stay the offer.
+test("a member who still owes is asked to pay, deadline or not", () => {
+  const late = circle({ settleable: true, secondsUntilSettle: 0 });
+  const action = primaryActionFor(late);
+  assert.equal(action.kind, "pay", "settling would cost them their deposit");
+  assert.equal(action.label, "Pay");
+});
+
+test("a defaulter past the deadline can still settle the round", () => {
+  // Nothing left to lose — their deposit is already seized — and someone has
+  // to be able to move a stuck round along.
+  const out = circle({ settleable: true, me: member({ defaulted: true, deposit: 0n }) });
+  assert.equal(primaryActionFor(out).kind, "settle");
 });
 
 test("an open circle invites a stranger to join", () => {

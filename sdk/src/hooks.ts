@@ -590,8 +590,15 @@ export function primaryActionFor(circle: CircleView | null): CircleAction {
   // if they were one of the debtors. The screen explains the closed door.
   if (!me?.isMember) return { kind: "none", label: "" };
 
-  if (circle.settleable) return { kind: "settle", label: "Settle round" };
+  // Paying comes before settling, even after the deadline has passed. The
+  // contract puts no deadline on `contribute`, so a member who still owes this
+  // round can always pay — and settling is the one action that would cost them
+  // their deposit and mark them defaulted. Offering "Settle round" to someone
+  // who has not paid hands them the button that seizes their own money. A live
+  // run did exactly that: a round timer ran out while a payment was in flight,
+  // and the screen swapped "Pay $100" for "Settle round" underneath them.
   if (!me.defaulted && !me.paidThisRound) return { kind: "pay", label: "Pay" };
+  if (circle.settleable) return { kind: "settle", label: "Settle round" };
   return { kind: "waiting", label: `${circle.outstanding.length} still to pay` };
 }
 
