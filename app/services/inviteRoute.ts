@@ -7,6 +7,11 @@
  * there is any account, which is why this is a plain function over
  * `window.location` rather than a hook.
  *
+ * SERVER SIDE: `vercel.json` rewrites `/c/:circleId` to `/index.html`. Expo
+ * exports a single static page with no router, so without that rewrite an
+ * invite 404s before any of this runs. (The rewrite carries no comment of its
+ * own because Vercel rejects unknown keys inside a rewrite object.)
+ *
  * Native deep links are not wired here. `chitcircle://` would need iOS
  * universal-link / Android app-link association files published on the domain,
  * which the team is not doing for this submission — see docs/concept.md §3. On
