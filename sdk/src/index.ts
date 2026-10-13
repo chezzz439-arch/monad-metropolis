@@ -90,11 +90,17 @@ export {
   type ScenarioName,
 } from "./mock.ts";
 export {
+  BID_SALT_PREFIX,
+  createAccountWithPasskey,
   deriveBidSecret,
+  friendlyPasskeyError,
   meraSigner,
-  openSigningSession,
+  requireFreshPasskey,
   sessionGuard,
+  setSessionLimits,
   signInWithPasskey,
+  signOut,
   type MeraAccount,
   type MeraSessionLimits,
+  type PasskeyAppIdentity,
 } from "./mera.ts";

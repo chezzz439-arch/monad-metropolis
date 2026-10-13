@@ -13,6 +13,7 @@
     "abi": "node scripts/gen-abi.mjs"
   },
   "dependencies": {
+    "@category-labs/mera": "^0.2.0",
     "viem": "^2.21.0"
   },
   "peerDependencies": {

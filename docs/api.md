@@ -27,11 +27,14 @@ const client = useMemo(() => mockClient({ scenario: "midRound" }), []);
 </ChitCircleProvider>
 ```
 
-On Sunday that one line becomes `clientFor(requireDeployment(monadTestnet))`
-and **nothing in your screens changes.** That is the whole point: `mockClient`
-returns a real `ChitCircleClient` subclass, so you call the same hooks and get
-the same `CircleView` you will get from Monad. Please don't build against
-hand-made fixture objects — they would have to be torn out on Sunday.
+When your screen is done, that one line becomes
+`clientFor(requireDeployment(monadTestnet))` and **nothing else in your screen
+changes.** The contract is live on testnet now, so that swap works today — but
+the mock is still the faster way to build, because it has no round deadlines to
+wait out and no test money to fetch. `mockClient` returns a real
+`ChitCircleClient` subclass, so you call the same hooks and get the same
+`CircleView` you will get from Monad. Please don't build against hand-made
+fixture objects — they would have to be torn out later.
 
 ### Scenarios
 
@@ -95,14 +98,14 @@ const client = clientFor(requireDeployment(monadTestnet));
 ```
 
 `monadTestnet` in `src/config.ts` holds the chain id, RPC, contract address,
-AUSD address and **deploy block** in one place. `requireDeployment` throws a
-named error for whatever is still missing rather than handing back a half
-config — right now the two addresses and the deploy block, which land after
-Saturday's deploy. Don't hardcode an address in a screen.
+AUSD address and **deploy block** in one place — all filled in and verified
+against the live chain. `requireDeployment` throws a named error for anything
+missing rather than handing back a half config. Don't hardcode an address in a
+screen.
 
-Until Mera is wired, `client` has no signer and every write throws
-`"No signer: sign in with a passkey first."` Reads work fine, so build and style
-screens against real chain data now.
+A `client` built this way has no signer, so reads work and every write throws
+`"No signer: sign in with a passkey first."` Pass `meraSigner(account, monadTestnet)`
+as the second argument once you have an account — see "Passkey accounts" below.
 
 ## Every hook returns one of two shapes
 
@@ -302,11 +305,56 @@ shortAddress("0x1234…")        // "0x1234…abcd"
 AUSD_DECIMALS                  // 6
 ```
 
+## Passkey accounts
+
+Sign-up is one ceremony. Sign-in is one ceremony. Nothing is stored anywhere.
+
+```ts
+const app = { rpId: location.hostname, rpName: "Chit Circle" };
+
+// New user. One fingerprint/face prompt, and they have an account.
+const account = await createAccountWithPasskey(app);
+
+// Returning user, or a device that has never seen this app. Same account.
+const account = await signInWithPasskey(app);
+
+// A new account cannot pay for its first action, so seed it first.
+await dripper.ensure(account.address);     // one on-chain tx — NOT instant
+
+// Allow silent payments to the circle, capped, for an hour.
+setSessionLimits(account, {
+  contract: monadTestnet.chitCircle,
+  maxAmountPerTx: parseAmount("100"),
+  expiresAt: new Date(Date.now() + 3_600_000),
+});
+
+const client = clientFor(monadTestnet, meraSigner(account, monadTestnet));
+```
+
+`signInWithPasskey(app)` with no second argument is the **stateless restore**:
+WebAuthn offers any passkey for `rpId`, and the same passkey always produces the
+same account. Clear app storage, use another phone — same account, nothing lost.
+That is the Mera UX bounty's test and it needs no code from you.
+
+Things to get right in the UI:
+
+| Rule | Why |
+|---|---|
+| After the passkey prompt, show "Setting up your account…" | Funding the new account is a real transaction. Jumping straight to Home shows an account that cannot pay yet. |
+| Show `friendlyPasskeyError(err)`, never `err.message` | Mera's own errors mention authenticators and crypto. `friendlyPasskeyError` is tested to never use the six banned words. |
+| Call `requireFreshPasskey(app, account)` before a member-to-member send | Once a session exists, Mera signs **with no prompt at all**. A send is the one action that should still feel deliberate, so we re-ask with a real gesture. |
+| Call `signOut(account)` on sign-out | It zeroes the in-memory key. Dropping the object alone does not. |
+
+**Be honest about the limits in the demo and the pitch.** Mera has no concept of
+session limits: no contract allow-list, no per-transaction cap, no expiry. Ours
+are enforced by `sessionGuard` in our own process, which is why it has tests.
+Saying "the protocol enforces this" would be untrue.
+
 ## Not ready yet
 
 | Thing | State |
 |---|---|
-| Mera passkey sign-in, signing session, PRF | `src/mera.ts` — stubs, throw on call. SDK shapes unconfirmed as of Oct 9; not guessing them. Build the signed-out gate with `mockClient({ signedOut: true })`. |
+| Mera passkey sign-in, signing session, PRF | **Written** against `@category-labs/mera` 0.2.0 — see "Passkey accounts" below. Typechecks, and 19 tests cover the limit guard and bid-salt determinism. **Not yet run against a real authenticator**, because WebAuthn needs a browser on a device; that test is a phone, not a terminal. Until someone taps it on a real phone, treat sign-in as unproven and keep using `mockClient({ signedOut: true })` for the signed-out gate. |
 | Bid mode (`commitBid` / `revealBid`) | Contract reverts `NotImplemented`. Stretch goal — don't build bid UI yet. |
 | Account funding on sign-up | **Done** (`GasDripper` in `gas.ts`), waiting on Mera. **Aadit:** a brand-new account has to be seeded before its first payment, and that is one on-chain transaction, so sign-up is *not* instant — show "Setting up your account…" after the passkey prompt rather than jumping straight to Home. Still one prompt; just not zero wait. |
 | AUSD token address | **Confirmed.** `AUSD_TESTNET` in `config.ts`, verified on-chain as 6-decimal "AUSD". |
@@ -320,7 +368,7 @@ AUSD_DECIMALS                  // 6
 ```bash
 cd sdk && npm install
 npm run typecheck   # clean as of this commit (src and test)
-npm test            # 33 passing — mock state machine, gas drip, invite parsing, money/timer formatting
+npm test            # 52 passing — mock state machine, passkey limit guard, gas drip, invites, formatting
 npm run test:e2e    # 15 passing — the whole flow on a local anvil chain
 
 cd ../contracts && forge build && cd ../sdk && npm run abi   # after contract changes
