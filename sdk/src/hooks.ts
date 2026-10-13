@@ -476,30 +476,42 @@ export type CircleAction =
 /**
  * The single primary button a circle screen should show. Centralising this
  * keeps the same decision out of three different screens.
+ *
+ * Exported as a plain function so the decision can be tested without a
+ * renderer — it is the kind of branching where a wrong answer is a wrong
+ * button in someone's hands, not a failed assertion.
  */
+export function primaryActionFor(circle: CircleView | null): CircleAction {
+  if (!circle) return { kind: "none", label: "" };
+  const me = circle.me;
+
+  if (!circle.started) {
+    if (me?.isMember) {
+      return { kind: "waiting", label: `Waiting for members (${circle.members.length}/${circle.maxMembers})` };
+    }
+    return { kind: "join", label: "Join circle" };
+  }
+
+  if (circle.finished) {
+    if (me?.isMember && !me.defaulted && !me.depositWithdrawn && me.deposit > 0n) {
+      return { kind: "withdraw", label: "Get deposit back" };
+    }
+    return { kind: "none", label: "Circle complete" };
+  }
+
+  // Someone who opened an invite link to a circle that already started. The
+  // actions below are not theirs to take: "Settle round" is permissionless
+  // on-chain but nonsense to offer a stranger, and "N still to pay" reads as
+  // if they were one of the debtors. The screen explains the closed door.
+  if (!me?.isMember) return { kind: "none", label: "" };
+
+  if (circle.settleable) return { kind: "settle", label: "Settle round" };
+  if (!me.defaulted && !me.paidThisRound) return { kind: "pay", label: "Pay" };
+  return { kind: "waiting", label: `${circle.outstanding.length} still to pay` };
+}
+
 export function usePrimaryAction(circle: CircleView | null): CircleAction {
-  return useMemo(() => {
-    if (!circle) return { kind: "none", label: "" };
-    const me = circle.me;
-
-    if (!circle.started) {
-      if (me?.isMember) {
-        return { kind: "waiting", label: `Waiting for members (${circle.members.length}/${circle.maxMembers})` };
-      }
-      return { kind: "join", label: "Join circle" };
-    }
-
-    if (circle.finished) {
-      if (me?.isMember && !me.defaulted && !me.depositWithdrawn && me.deposit > 0n) {
-        return { kind: "withdraw", label: "Get deposit back" };
-      }
-      return { kind: "none", label: "Circle complete" };
-    }
-
-    if (circle.settleable) return { kind: "settle", label: "Settle round" };
-    if (me?.isMember && !me.defaulted && !me.paidThisRound) return { kind: "pay", label: "Pay" };
-    return { kind: "waiting", label: `${circle.outstanding.length} still to pay` };
-  }, [circle]);
+  return useMemo(() => primaryActionFor(circle), [circle]);
 }
 
 /** Avoid a stale-closure footgun when polling inside callbacks. */

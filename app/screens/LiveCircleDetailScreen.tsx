@@ -188,8 +188,12 @@ export function LiveCircleDetailScreen({
   const defaulters = roster.filter((member) => member.defaulted);
   const recipientName = circle.recipient ? nameOf(circle.recipient) : null;
   const spotsLeft = circle.maxMembers - circle.members.length;
+  /** An invite is only worth sending while there is a seat left to fill. */
+  const hasRoom = !circle.started && !circle.finished;
   /** Members of a circle that is not full yet are the only ones who can recruit. */
-  const showInvite = !circle.started && !circle.finished && Boolean(circle.me?.isMember);
+  const showInvite = hasRoom && Boolean(circle.me?.isMember);
+  /** Arrived from a link, but the circle filled up and started without them. */
+  const closedToVisitor = circle.started && !circle.finished && !circle.me?.isMember;
 
   return (
     <>
@@ -255,6 +259,21 @@ export function LiveCircleDetailScreen({
         ) : null}
 
         {/*
+          They followed a link to a circle that filled up before they got
+          here. Saying so is the whole job: there is no action to offer, and
+          silence would read as a screen that failed to load.
+        */}
+        {closedToVisitor ? (
+          <View style={styles.inviteBlock}>
+            <Text style={styles.inviteTitle}>This circle is already running</Text>
+            <Text style={styles.inviteBody}>
+              All {circle.maxMembers} seats were taken, so it cannot add anyone new. Ask whoever sent the
+              link to start another one — you can watch this one from here.
+            </Text>
+          </View>
+        ) : null}
+
+        {/*
           Still filling up, and this viewer is already in — which is exactly
           where the organizer lands after creating. Nothing else can happen
           until the others arrive, so inviting them is the screen's whole job
@@ -294,9 +313,9 @@ export function LiveCircleDetailScreen({
           <SectionTitle
             right={
               // Not alongside the big "Invite members" button — one way to do
-              // a thing, not two. Kept for a full circle, where the block is
-              // gone but someone may still want the link.
-              showInvite || circle.finished ? undefined : (
+              // a thing, not two. And never once the circle is full: that link
+              // would walk a stranger into a circle that cannot take them.
+              !hasRoom || showInvite ? undefined : (
                 <Pressable onPress={() => void shareInvite()} style={styles.share} accessibilityRole="button">
                   <Text style={styles.shareText}>Share invite</Text>
                 </Pressable>
