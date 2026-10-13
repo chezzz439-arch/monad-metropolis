@@ -96,6 +96,16 @@ sponsoring contract), not a key on the device. Leave the variable blank and the
 app runs without funding; `sdk/src/gas.ts` documents the thresholds and the
 measured per-circle cost.
 
+**Network fees are funded; spending money is not.** The drip covers the fee to
+transact, not the $100 a circle asks for. A brand-new account therefore has a
+zero AUSD balance and cannot join anything until it is topped up, and the only
+self-serve route is Agora's faucet, whose 60-second cooldown is global to the
+faucet rather than per account — so a group cannot all claim at once. **Fund the
+accounts you intend to demo with before you demo**, by sending them AUSD from an
+account that already holds some; waiting on the faucet in front of an audience
+is not a plan. A paymaster plus a sponsored first deposit is the real fix and is
+not in this submission.
+
 The app stores only the passkey credential ID and derived public address in
 SecureStore. PRF output, seed, and private-key bytes are not persisted. Clearing
 the app metadata and signing in with the same discoverable passkey reconstructs
@@ -234,6 +244,21 @@ chain adds roughly 16,000 blocks an hour, so the scan needed over a thousand
 chunked requests and grew worse hourly. The deployed app just said "could not
 load circles". `sdk/test/discovery.test.ts` and one e2e test now fail if a future
 change reintroduces a log scan.
+
+### Read budget
+
+The same RPC also rate-limits, and it counts **JSON-RPC calls, not HTTP
+requests** — measured: single requests go through 12 for 12, while three
+batches of twenty in a row earn an HTTP 429. Batching is still on (it is free),
+but it is not a way to buy more calls; it only makes each refusal more
+expensive. Keeping the count down is the actual lever, so a circle screen costs
+about 14 reads per poll at 8s rather than the 23 per 4s it started at:
+`rosterFrom()` builds the member list from the `CircleView` already in hand, and
+`isMember`/`paidThisRound` are derived from `members`/`outstanding` instead of
+being asked for again.
+
+If you are demoing this and seeing "the network is busy", point
+`EXPO_PUBLIC_MONAD_RPC_URL` at a dedicated endpoint rather than the public one.
 
 One consequence worth knowing: `createCircle` records no organizer, so a circle
 you created but have not yet **joined** is not linked to you on chain. The app
