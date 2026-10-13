@@ -110,12 +110,13 @@ export function requireDeployment(d: Partial<Deployment>, label = "deployment"):
 export const RECEIPT_POLL_MS = 250;
 
 /**
- * Calls a second the public RPC allows, minus a margin.
+ * Calls a second to allow, against the RPC's ceiling of 15.
  *
- * The ceiling is 15; this leaves room for the wallet client, which has its own
- * transport and is not paced by this one.
+ * The margin absorbs what we cannot see: a retry viem fires internally, and
+ * another tab of the same app on the same IP — which is not hypothetical,
+ * since demoing this means two browser profiles open side by side.
  */
-export const RPC_CALLS_PER_SECOND = 12;
+export const RPC_CALLS_PER_SECOND = 10;
 
 /**
  * Hold a transport under a calls-per-second ceiling.
@@ -129,9 +130,32 @@ export const RPC_CALLS_PER_SECOND = 12;
  * waiting on, so refusing is never better than arriving a few hundred
  * milliseconds later.
  */
-export function paced(inner: Transport, callsPerSecond: number): Transport {
-  const sent: number[] = [];
-  let chain: Promise<unknown> = Promise.resolve();
+interface Window {
+  sent: number[];
+  chain: Promise<unknown>;
+}
+
+/**
+ * One window per endpoint, shared by every client that talks to it.
+ *
+ * Module-level on purpose. The limit is enforced by the node against our IP,
+ * so it does not care that reads go through a public client and writes go
+ * through the signer's wallet client — but two independent pacers would each
+ * think they had the whole budget and together blow it. That is exactly what
+ * happened: reads were paced, writes were not, and a join still earned
+ * "requests limited to 15/sec" because viem issues about five calls per write
+ * (chainId, gas estimate, nonce, fees, send) in one burst.
+ */
+const windows = new Map<string, Window>();
+
+export function paced(inner: Transport, callsPerSecond: number, endpoint: string): Transport {
+  let shared = windows.get(endpoint);
+  if (!shared) {
+    shared = { sent: [], chain: Promise.resolve() };
+    windows.set(endpoint, shared);
+  }
+  const window = shared;
+  const sent = window.sent;
 
   const slot = async (): Promise<void> => {
     for (;;) {
@@ -152,10 +176,10 @@ export function paced(inner: Transport, callsPerSecond: number): Transport {
     // Serialised through one chain so concurrent callers take slots in order;
     // without it they all read the same window and all decide to proceed.
     const request = (args: unknown, reqOpts?: unknown) => {
-      const next = chain.then(slot).then(() => inner_(args, reqOpts));
+      const next = window.chain.then(slot).then(() => inner_(args, reqOpts));
       // The chain must never carry a rejection forward, or one refused call
       // wedges every later one behind it.
-      chain = next.catch(() => {});
+      window.chain = next.catch(() => {});
       return next;
     };
     return { ...transport, request: request as typeof transport.request };
@@ -190,6 +214,7 @@ export function clientFor(deployment: Deployment, signer?: ChitSigner): ChitCirc
         retryDelay: 300,
       }),
       RPC_CALLS_PER_SECOND,
+      deployment.rpcUrl,
     ),
     pollingInterval: RECEIPT_POLL_MS,
   }) as PublicClient;

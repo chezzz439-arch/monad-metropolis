@@ -14,6 +14,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { createWalletClient, defineChain, http, toHex, type Address, type Chain, type Hash } from "viem";
+import { RPC_CALLS_PER_SECOND, paced } from "./config.ts";
 import type { ChitSigner } from "./types.ts";
 
 export interface MeraSessionLimits {
@@ -192,8 +193,16 @@ export function meraSigner(
   rpcUrl = "https://testnet-rpc.monad.xyz",
   chain: Chain = monadTestnet,
 ): ChitSigner {
+  // Shares the read client's rate window, not just its shape. viem issues
+  // about five calls for one write — chain id, gas estimate, nonce, fees,
+  // send — all in a burst, and an unpaced burst on top of paced reads still
+  // breached the RPC's 15-a-second ceiling and failed a join on the live site.
   const walletForSession = (session: Secp256k1SigningSession) =>
-    createWalletClient({ account: toViemAccount(session), chain, transport: http(rpcUrl) });
+    createWalletClient({
+      account: toViemAccount(session),
+      chain,
+      transport: paced(http(rpcUrl), RPC_CALLS_PER_SECOND, rpcUrl),
+    });
 
   const withFreshSession = async (submit: (wallet: ReturnType<typeof walletForSession>) => Promise<Hash>) => {
     // openSigningSession ends the account's previous session before it returns,
