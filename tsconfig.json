@@ -4,5 +4,5 @@
     "allowImportingTsExtensions": true
   },
   "include": ["App.tsx", "app/**/*.ts", "app/**/*.tsx", "sdk/src/**/*.ts"],
-  "exclude": ["node_modules", "sdk/test"]
+  "exclude": ["node_modules", "sdk/test", "app/**/*.test.ts"]
 }

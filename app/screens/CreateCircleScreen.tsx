@@ -30,10 +30,13 @@ const CADENCES = [
 
 export function CreateCircleScreen({
   tokenAddress,
+  account,
   onClose,
   onCreated,
 }: {
   tokenAddress: Address;
+  /** Who is creating. Recorded so the circle stays on *their* home screen. */
+  account?: Address;
   onClose: () => void;
   onCreated: (circleId: bigint) => void;
 }) {
@@ -71,7 +74,7 @@ export function CreateCircleScreen({
     // used to do — hands back whatever id was next at that moment, so another
     // member creating a circle in the same couple of seconds would send the
     // organizer into a stranger's circle.
-    await rememberCircleName(result.circleId, name);
+    await rememberCircleName(result.circleId, name, account);
     onCreated(result.circleId);
   };
 

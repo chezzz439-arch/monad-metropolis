@@ -19,7 +19,8 @@
     "typecheck": "tsc --noEmit",
     "test:sdk": "npm --prefix sdk test",
     "test:sdk:e2e": "npm --prefix sdk run test:e2e",
-    "test:contracts": "forge test --root contracts"
+    "test:contracts": "forge test --root contracts",
+    "test:app": "node --test app/**/*.test.ts"
   },
   "dependencies": {
     "@category-labs/mera": "^0.2.0",

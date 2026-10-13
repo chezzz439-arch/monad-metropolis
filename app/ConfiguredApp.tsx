@@ -257,7 +257,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
           <CircleListScreen
             myAccount={account}
             names={names}
-            knownIds={rememberedCircleIds(names)}
+            knownIds={rememberedCircleIds(account)}
             onSelectCircle={setCircleId}
             onCreateNew={() => setCreateOpen(true)}
             expectedDeployment={{ chainId: deployment.chainId, contract: deployment.chitCircle }}
@@ -270,6 +270,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
         {createOpen ? (
           <CreateCircleScreen
             tokenAddress={deployment.token}
+            account={account}
             onClose={() => setCreateOpen(false)}
             onCreated={(createdCircleId) => {
               setCreateOpen(false);
