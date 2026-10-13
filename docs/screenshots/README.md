@@ -49,3 +49,6 @@ followed too late, after the circle filled up.
 | `18-error-bad-link.png` | `welcome-bad-link` | An invite link that arrived truncated |
 | `19-setup-failed.png` | `setup-failed` | Account setup did not finish |
 | `20-circle-closed.png` | `detail-closed` | A link that arrived too late — the circle is full, so there is nothing to offer |
+| `21-setup-funded.png` | `setup-funded` | End of sign-up: the account has gas **and** $500 to spend |
+| `22-setup-dry.png` | `setup-dry` | The dripper ran out — a sentence you can act on, not an error |
+| `23-welcome-back.png` | `home-welcome-back` | Signed back in on a device holding nothing; the circles came back |

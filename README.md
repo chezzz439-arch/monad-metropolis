@@ -113,6 +113,20 @@ still throws. An account with gas but no money can sign in, look around, and be
 topped up by a teammate — so if the dripper runs dry, setup says so in a
 sentence and finishes anyway.
 
+**Check the dripper before you demo.** Every sign-up costs it about 0.06 MON —
+0.05 handed over, plus the fee on the AUSD transfer — so roughly 20 sign-ups per
+MON. It ran dry mid-testing and the only symptom was "We could not finish
+setting up your account", which looks like a bug in the app rather than an empty
+account. Gas is the binding constraint, not dollars: the $30,000 of AUSD claimed
+from the faucet is 60 sign-ups, while a MON balance disappears far faster.
+
+```sh
+# dripper address is derived from EXPO_PUBLIC_GAS_FUNDER_KEY, never printed here
+cast balance   <dripper> --rpc-url https://testnet-rpc.monad.xyz --ether
+cast call 0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC \
+  'balanceOf(address)(uint256)' <dripper> --rpc-url https://testnet-rpc.monad.xyz
+```
+
 A paymaster plus a sponsored first deposit is still the real answer, and is not
 in this submission.
 
