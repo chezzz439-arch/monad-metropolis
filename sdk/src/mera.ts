@@ -6,365 +6,262 @@ import {
   isMeraError,
   type PasskeyCredentialMetadata,
   type Secp256k1SigningSession,
-  type WebAuthnClient,
 } from "@category-labs/mera";
 import { toViemAccount } from "@category-labs/mera/viem";
-import {
-  bytesToHex,
-  createWalletClient,
-  http,
-  sha256,
-  stringToBytes,
-  type Address,
-  type Chain,
-  type Hash,
-  type LocalAccount,
-} from "viem";
-import { erc20Abi } from "./client.ts";
-import { RECEIPT_POLL_MS, type Deployment } from "./config.ts";
+import { HDKey } from "@scure/bip32";
+import { entropyToMnemonic, mnemonicToSeedSync } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { utf8ToBytes } from "@noble/hashes/utils.js";
+import { createWalletClient, defineChain, http, toHex, type Address, type Chain, type Hash } from "viem";
 import type { ChitSigner } from "./types.ts";
 
-/**
- * Mera adapter — passkey in, {@link ChitSigner} out.
- *
- * Written against `@category-labs/mera` 0.2.0, reading its shipped type
- * declarations rather than the prose docs. Two things the earlier draft of this
- * file asserted turned out to be wrong, so they are worth stating plainly:
- *
- *  1. There is NO BIP-39/BIP-32 derivation. `grep -ri "bip32|bip39|mnemonic"`
- *     over the package finds nothing. The 32-byte WebAuthn PRF output IS the
- *     secp256k1 private key, handed straight to `createSecp256k1SigningSession`.
- *     Any claim about path m/44'/60'/0'/0/0 is fiction.
- *  2. Mera ships a viem adapter (`@category-labs/mera/viem`), so we do not hand
- *     -roll signing. `toViemAccount(session)` returns a real `LocalAccount` with
- *     signTransaction / signMessage / signTypedData / signAuthorization.
- *
- * WHAT THIS MEANS FOR WHAT WE MAY CLAIM TO JUDGES (concept.md section 5):
- *
- * The account is an ordinary EOA. It pays its own fees in MON; Mera has no
- * paymaster, no sponsorship and no relayer — the package exports exactly four
- * things that touch keys, and none of them is a paymaster. So a brand-new
- * account cannot transact until something funds it: see {@link GasDripper} in
- * ./gas.ts, which is already wired for this.
- *
- * `toViemAccount`'s own documentation says signing "never shows a passkey
- * prompt". That is the good part of the UX and also the whole security story:
- * once a session exists, nothing in Mera limits what it signs. There is no
- * contract allow-list, no per-transaction cap and no expiry in the library.
- * {@link sessionGuard} is therefore the ONLY thing enforcing our limits, and it
- * runs in our own process. Say that honestly rather than implying the protocol
- * enforces it. For actions that deserve a fresh human gesture, use
- * {@link requireFreshPasskey}, which runs a real WebAuthn user-verification
- * ceremony and proves the same key is present.
- */
-
-/** WebAuthn relying-party identity. `rpId` must be the exact host we serve. */
-export interface PasskeyAppIdentity {
-  /**
-   * Relying-party ID: the hostname, no scheme and no port. A passkey is bound
-   * to this value, so it must match in production or sign-in silently finds no
-   * credential. On a device-hosted dev build use `localhost`.
-   */
-  rpId: string;
-  /** Name the authenticator may display. */
-  rpName?: string;
-  /**
-   * Who runs the WebAuthn ceremony. Omit on web and Mera uses
-   * `navigator.credentials`.
-   *
-   * On React Native there is no `navigator.credentials`, so every call here
-   * fails with `PASSKEY_OPERATION_FAILED` until this is supplied:
-   *
-   * ```ts
-   * import { reactNativeWebAuthnClient } from "@category-labs/mera/react-native-webauthn-client";
-   * const app = { rpId: "chitcircle.app", webAuthnClient: reactNativeWebAuthnClient };
-   * ```
-   *
-   * It is a const, not a factory — do not call it. Importing that module pulls
-   * in React Native, so a web build must never import it; that is why this is a
-   * parameter here rather than an import in this file.
-   *
-   * Kept as config so the React-Native-versus-PWA decision is one object
-   * literal, not an edit to this file.
-   */
-  webAuthnClient?: WebAuthnClient;
-}
-
 export interface MeraSessionLimits {
-  /** Only allow no-prompt writes to this contract. */
   contract: Address;
-  /** Largest no-prompt amount per transaction. */
   maxAmountPerTx: bigint;
-  /** Session lifetime; drives the expiry banner in the UI. */
   expiresAt: Date;
 }
 
 export interface MeraAccount {
   address: Address;
-  limits: MeraSessionLimits | null;
-  /**
-   * Live signing session holding a copy of the key in memory. Call
-   * {@link signOut} to zero it; after that every signing method throws.
-   */
-  readonly session: Secp256k1SigningSession;
-  /** viem account backed by `session`. Signs with no further passkey prompt. */
-  readonly viemAccount: LocalAccount<"mera">;
-  /** Which passkey produced this account, for a targeted re-assertion later. */
-  readonly credential: PasskeyCredentialMetadata;
+  credentialId: string;
+  rpId: string;
+  limits: MeraSessionLimits;
+  session: Secp256k1SigningSession;
 }
 
-/** Shown to the authenticator, not to our own UI. */
-const DEFAULT_LABEL = "Chit Circle";
-
-/**
- * Sign-up: one passkey ceremony, one account. No seed phrase, no email code.
- * This is the Agora bounty's required onboarding step.
- *
- * The new account holds nothing and pays its own fees, so the caller must fund
- * it before its first write:
- *
- * ```ts
- * const account = await createAccountWithPasskey({ rpId: location.hostname });
- * await dripper.ensure(account.address);   // one on-chain tx, not instant
- * ```
- */
-export async function createAccountWithPasskey(
-  app: PasskeyAppIdentity,
-  label: string = DEFAULT_LABEL,
-): Promise<MeraAccount> {
-  const created = await createPasskeyWithPrfOutput({
-    rp: { id: app.rpId, name: app.rpName ?? DEFAULT_LABEL },
-    user: { name: label, displayName: label },
-    webAuthnClient: app.webAuthnClient,
-  });
-  return accountFromPrf(created.prfOutput, {
-    credentialId: created.credentialId,
-    transports: created.transports,
-  });
+export interface PasskeyAccountOptions {
+  rpId: string;
+  contract: Address;
+  credential?: PasskeyCredentialMetadata;
+  maxAmountPerTx?: bigint;
+  userName?: string;
+  displayName?: string;
 }
 
+const SESSION_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_PROMPT_FREE_CAP = 100_000_000n;
 /**
- * Sign-in, and the same call restores an account on a device that has never
- * seen this app — which is the Mera UX bounty's "stateless test".
- *
- * Nothing is stored and nothing needs to be: with `credential` omitted,
- * WebAuthn offers any discoverable passkey for `rpId`, and the PRF output for a
- * given credential + rpId + salt is deterministic. Same passkey, same key, same
- * address, on any device. Clearing app storage loses nothing.
+ * Namespace for bid-reveal salts. Exported so a test can assert it stays
+ * distinct from anything used to derive the account key itself: the same
+ * passkey produces both, and a collision would leak one from the other.
  */
-export async function signInWithPasskey(
-  app: PasskeyAppIdentity,
-  credential?: PasskeyCredentialMetadata,
-): Promise<MeraAccount> {
-  const got = await getPasskeyPrfOutput({ rpId: app.rpId, credential, webAuthnClient: app.webAuthnClient });
-  return accountFromPrf(got.prfOutput, { credentialId: got.credentialId });
-}
+export const BID_SALT_PREFIX = "chitcircle:bid:";
 
-/**
- * Turn a 32-byte PRF output into an account, then wipe our copy of it. The
- * session keeps its own copy, which {@link signOut} zeroes.
- */
-function accountFromPrf(
-  prfOutput: Uint8Array,
-  credential: PasskeyCredentialMetadata,
-): MeraAccount {
-  const session = createSecp256k1SigningSession({ privateKey: prfOutput });
-  prfOutput.fill(0);
+const monadTestnet = defineChain({
+  id: 10143,
+  name: "Monad Testnet",
+  nativeCurrency: { name: "Monad", symbol: "MON", decimals: 18 },
+  rpcUrls: { default: { http: ["https://testnet-rpc.monad.xyz"] } },
+  blockExplorers: { default: { name: "Monad Explorer", url: "https://testnet.monadexplorer.com" } },
+  testnet: true,
+});
 
-  const viemAccount = toViemAccount(session);
-  const address = getEvmAddress(session.publicKey) as Address;
+const erc20TransferAbi = [{
+  type: "function",
+  name: "transfer",
+  stateMutability: "nonpayable",
+  inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }],
+  outputs: [{ type: "bool" }],
+}] as const;
 
-  // Mera derives the address two ways here — getEvmAddress from the session's
-  // public key, and internally inside toViemAccount. If they ever disagree we
-  // would sign for one address and display another, so fail loudly instead.
-  if (viemAccount.address.toLowerCase() !== address.toLowerCase()) {
-    session.end();
-    throw new Error(
-      `Mera address mismatch: session=${address} viem=${viemAccount.address}. Refusing to continue.`,
-    );
+async function nativeWebAuthnClient() {
+  try {
+    return (await import("@category-labs/mera/react-native-webauthn-client")).reactNativeWebAuthnClient;
+  } catch {
+    throw new Error("Passkeys require a native development build; they are not available in Expo Go.");
   }
-
-  return { address, limits: null, session, viemAccount, credential };
 }
 
-/**
- * Record the limits this session is allowed to sign without a prompt.
- *
- * Deliberately not `async` and deliberately not called "open": Mera has no
- * session-limits concept, so there is nothing to negotiate with it. The session
- * already exists from the moment of sign-in. All this does is store what
- * {@link sessionGuard} will enforce on our side.
- */
-export function setSessionLimits(account: MeraAccount, limits: MeraSessionLimits): MeraAccount {
-  account.limits = limits;
-  return account;
+export function accountFromPrfOutput(
+  result: { credentialId: string; prfOutput: Uint8Array },
+  options: PasskeyAccountOptions,
+): MeraAccount {
+  let seed: Uint8Array | undefined;
+  let privateKey: Uint8Array | undefined;
+  try {
+    const mnemonic = entropyToMnemonic(result.prfOutput, wordlist);
+    result.prfOutput.fill(0);
+    seed = mnemonicToSeedSync(mnemonic);
+    const node = HDKey.fromMasterSeed(seed).derive("m/44'/60'/0'/0/0");
+    if (!node.privateKey) throw new Error("Passkey key derivation failed.");
+    privateKey = node.privateKey;
+    const session = createSecp256k1SigningSession({ privateKey });
+    return {
+      address: getEvmAddress(session.publicKey) as Address,
+      credentialId: result.credentialId,
+      rpId: options.rpId,
+      limits: {
+        contract: options.contract,
+        maxAmountPerTx: options.maxAmountPerTx ?? DEFAULT_PROMPT_FREE_CAP,
+        expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+      },
+      session,
+    };
+  } finally {
+    result.prfOutput.fill(0);
+    seed?.fill(0);
+    privateKey?.fill(0);
+  }
 }
 
-/**
- * Client-side enforcement of session limits. Call before any no-prompt write.
- *
- * This is not belt-and-braces — it is the only belt. See the file header.
- */
+export async function createPasskeyAccount(options: PasskeyAccountOptions): Promise<MeraAccount> {
+  assertRpId(options.rpId);
+  const result = await createPasskeyWithPrfOutput({
+    rp: { id: options.rpId, name: "Chit Circle" },
+    user: { name: options.userName ?? "chit-circle-account", displayName: options.displayName ?? "Chit Circle account" },
+    webAuthnClient: await nativeWebAuthnClient(),
+  });
+  return accountFromPrfOutput(result, options);
+}
+
+export async function signInWithPasskey(options: PasskeyAccountOptions): Promise<MeraAccount> {
+  assertRpId(options.rpId);
+  const result = await getPasskeyPrfOutput({
+    rpId: options.rpId,
+    credential: options.credential,
+    webAuthnClient: await nativeWebAuthnClient(),
+  });
+  return accountFromPrfOutput(result, options);
+}
+
+/** Re-prompts for the passkey and opens a fresh, bounded in-memory session. */
+export async function openSigningSession(account: MeraAccount): Promise<MeraAccount> {
+  const result = await getPasskeyPrfOutput({
+    rpId: account.rpId,
+    credential: { credentialId: account.credentialId },
+    webAuthnClient: await nativeWebAuthnClient(),
+  });
+  const renewed = accountFromPrfOutput(result, {
+    rpId: account.rpId,
+    contract: account.limits.contract,
+    maxAmountPerTx: account.limits.maxAmountPerTx,
+    credential: { credentialId: account.credentialId },
+  });
+  account.session.end();
+  return renewed;
+}
+
+export async function deriveBidSecret(
+  account: Pick<MeraAccount, "credentialId" | "rpId">,
+  circleId: bigint,
+  round: number,
+): Promise<`0x${string}`> {
+  const prfSalt = sha256(utf8ToBytes(`${BID_SALT_PREFIX}${circleId}:${round}`));
+  const result = await getPasskeyPrfOutput({
+    rpId: account.rpId,
+    credential: { credentialId: account.credentialId },
+    prfSalt,
+    webAuthnClient: await nativeWebAuthnClient(),
+  });
+  try {
+    return toHex(result.prfOutput);
+  } finally {
+    result.prfOutput.fill(0);
+    prfSalt.fill(0);
+  }
+}
+
 export function sessionGuard(
   limits: MeraSessionLimits | null,
   target: Address,
   amount: bigint,
 ): { allowed: boolean; reason?: string } {
   if (!limits) return { allowed: false, reason: "No active signing session" };
-  if (Date.now() > limits.expiresAt.getTime()) return { allowed: false, reason: "Session expired" };
-  if (target.toLowerCase() !== limits.contract.toLowerCase()) {
-    return { allowed: false, reason: "Session is not scoped to this contract" };
-  }
+  if (Date.now() >= limits.expiresAt.getTime()) return { allowed: false, reason: "Session expired" };
+  if (target.toLowerCase() !== limits.contract.toLowerCase()) return { allowed: false, reason: "Session is not scoped to this contract" };
   if (amount > limits.maxAmountPerTx) return { allowed: false, reason: "Over the session's per-transaction cap" };
   return { allowed: true };
 }
 
-/**
- * Re-prove the human is present, for actions a silent session should not cover
- * (sending money to another member, say).
- *
- * Mera cannot make `signDigest` prompt, so this runs a fresh WebAuthn
- * user-verification ceremony and checks it yields the same key. Returns true
- * only if the gesture succeeded AND re-derived this exact account; a different
- * passkey on the same device returns false rather than throwing.
- */
-export async function requireFreshPasskey(
-  app: PasskeyAppIdentity,
+export function meraSigner(
   account: MeraAccount,
-): Promise<boolean> {
-  const got = await getPasskeyPrfOutput({
-    rpId: app.rpId,
-    credential: account.credential,
-    webAuthnClient: app.webAuthnClient,
-  });
-  const probe = createSecp256k1SigningSession({ privateKey: got.prfOutput });
-  got.prfOutput.fill(0);
-  try {
-    return (getEvmAddress(probe.publicKey) as Address).toLowerCase() === account.address.toLowerCase();
-  } finally {
-    probe.end();
-  }
-}
+  rpcUrl = "https://testnet-rpc.monad.xyz",
+  chain: Chain = monadTestnet,
+): ChitSigner {
+  const walletForSession = (session: Secp256k1SigningSession) =>
+    createWalletClient({ account: toViemAccount(session), chain, transport: http(rpcUrl) });
 
-/** Salt prefix for bid secrets. Changing it invalidates every existing bid. */
-export const BID_SALT_PREFIX = "chitcircle:bid";
-
-/**
- * The 32-byte PRF salt for one circle+round. Exported so its determinism can be
- * tested without an authenticator: the same inputs must always give the same
- * salt, or a bid committed on one device cannot be revealed on another.
- */
-export function bidSalt(circleId: bigint, round: number): Uint8Array {
-  return sha256(stringToBytes(`${BID_SALT_PREFIX}:${circleId}:${round}`), "bytes");
-}
-
-/**
- * Bid secret for the sealed-bid mode (Many Keys stretch goal).
- *
- * Derived from the passkey with a per-round salt, so it is re-derivable on any
- * device with no stored secret — that is the cross-device test. It is NOT
- * derived from the signing key, so a leaked bid secret reveals nothing about
- * the account.
- *
- * Costs one passkey prompt per call, by design: the gesture is the proof.
- */
-export async function deriveBidSecret(
-  app: PasskeyAppIdentity,
-  circleId: bigint,
-  round: number,
-): Promise<`0x${string}`> {
-  const got = await getPasskeyPrfOutput({
-    rpId: app.rpId,
-    prfSalt: bidSalt(circleId, round),
-    webAuthnClient: app.webAuthnClient,
-  });
-  const secret = bytesToHex(got.prfOutput);
-  got.prfOutput.fill(0);
-  return secret;
-}
-
-/**
- * Build the {@link ChitSigner} every hook in this package already expects. Once
- * this returns, nothing else in the SDK knows Mera exists.
- *
- * Mirrors `test/e2e/harness.ts`'s `localSigner` so the anvil suite and the real
- * app drive writes through the same shape.
- */
-export function meraSigner(account: MeraAccount, deployment: Deployment): ChitSigner {
-  const chain: Chain = {
-    id: deployment.chainId,
-    name: "Monad Testnet",
-    nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
-    rpcUrls: { default: { http: [deployment.rpcUrl] } },
+  const withFreshSession = async (submit: (wallet: ReturnType<typeof walletForSession>) => Promise<Hash>) => {
+    // openSigningSession ends the account's previous session before it returns,
+    // so the renewed one has to be adopted BEFORE the write is attempted. If it
+    // were only adopted on success, one cancelled or reverted write would leave
+    // account.session pointing at the ended session, and the next prompt-free
+    // contribute — which signs with account.session directly — would throw
+    // SESSION_ENDED for the rest of the run.
+    const renewed = await openSigningSession(account);
+    account.session = renewed.session;
+    account.limits = renewed.limits;
+    // A failed write does not make this session unsafe: it is still bounded by
+    // its own TTL and by sessionGuard, so it is left live rather than ended,
+    // which would strand the account.
+    return submit(walletForSession(renewed.session));
   };
-  const wallet = createWalletClient({
-    account: account.viemAccount,
-    chain,
-    transport: http(deployment.rpcUrl),
-    pollingInterval: RECEIPT_POLL_MS,
-  });
 
   return {
     address: account.address,
+    async write(request) {
+      const submit = (wallet: ReturnType<typeof walletForSession>) => wallet.writeContract({
+        address: request.address,
+        abi: request.abi as never,
+        functionName: request.functionName as never,
+        args: request.args as never,
+      } as never);
 
-    write({ address, abi, functionName, args }) {
-      // Scope and expiry are checkable without knowing an amount; the per-tx cap
-      // is enforced in transferToken, which is the only call that carries one.
-      const verdict = sessionGuard(account.limits, address, 0n);
-      if (!verdict.allowed) return Promise.reject(new Error(verdict.reason));
-      return wallet.writeContract({
-        address,
-        abi,
-        functionName,
-        args,
-      } as never) as Promise<Hash>;
+      const promptFree = request.functionName === "contribute" &&
+        request.noPromptAmount !== undefined &&
+        sessionGuard(account.limits, request.address, request.noPromptAmount).allowed;
+      return promptFree ? submit(walletForSession(account.session)) : withFreshSession(submit);
     },
-
-    transferToken({ token, to, amount }) {
-      // A send leaves the circle contract, so the scope check cannot apply; the
-      // amount cap and expiry still do. Pair this with requireFreshPasskey.
-      if (!account.limits) return Promise.reject(new Error("No active signing session"));
-      if (Date.now() > account.limits.expiresAt.getTime()) {
-        return Promise.reject(new Error("Session expired"));
-      }
-      if (amount > account.limits.maxAmountPerTx) {
-        return Promise.reject(new Error("Over the session's per-transaction cap"));
-      }
-      return wallet.writeContract({
-        address: token,
-        abi: erc20Abi,
+    async transferToken(request) {
+      return withFreshSession((wallet) => wallet.writeContract({
+        address: request.token,
+        abi: erc20TransferAbi,
         functionName: "transfer",
-        args: [to, amount],
-      });
+        args: [request.to, request.amount],
+      }));
     },
   };
 }
 
-/** Zero the in-memory key. Safe to call twice. */
-export function signOut(account: MeraAccount): void {
-  account.limits = null;
+export function endMeraSession(account: MeraAccount): void {
   account.session.end();
 }
 
 /**
- * Turn a Mera failure into something we can show a user, obeying the vocabulary
- * rule in the team guide: no "wallet", "gas", "seed phrase", "private key",
- * "blockchain" or "token" in anything a user reads.
+ * User-facing copy for a failed passkey step.
+ *
+ * Every branch returns a fixed string. Mera's own `error.message` and raw
+ * thrown values are deliberately never shown: they carry internal vocabulary
+ * the team guide bans from the UI, and a transport error can contain a URL and
+ * port. mera.test.ts asserts the banned-word list over every code plus an
+ * unrecognised one.
  */
-export function friendlyPasskeyError(err: unknown): string {
-  if (!isMeraError(err)) return "Something went wrong. Please try again.";
-  switch (err.code) {
-    case "PRF_UNAVAILABLE":
-      return "This device can't create a secure account yet. Try your phone's built-in screen lock, or another device.";
-    case "PASSKEY_OPERATION_FAILED":
-      return "That didn't complete. Tap again and confirm with your fingerprint, face, or device PIN.";
-    case "CRYPTO_UNAVAILABLE":
-      return "Your browser is blocking secure setup. Open the app in a normal tab, not a private or embedded window.";
-    case "SESSION_ENDED":
-      return "You've been signed out. Sign in again to continue.";
-    case "INPUT_INVALID":
-      return "Something went wrong setting up your account. Please try again.";
-    default:
-      return "Something went wrong. Please try again.";
+export function describeMeraError(error: unknown): string {
+  if (isMeraError(error)) {
+    switch (error.code) {
+      case "PRF_UNAVAILABLE":
+        return "This phone cannot set up a Chit Circle account yet. It needs iOS 18 or newer, or an up-to-date Android.";
+      case "PASSKEY_OPERATION_FAILED":
+        return "That confirmation was cancelled. Tap again and confirm with your face, fingerprint or PIN.";
+      case "CRYPTO_UNAVAILABLE":
+        return "This phone is missing the security features Chit Circle needs. Try updating it, then try again.";
+      case "SESSION_ENDED":
+        return "You were signed out for safety. Sign in again to continue.";
+      case "INPUT_INVALID":
+        return "Something about those details was not right. Check them and try again.";
+    }
+  }
+  return "Something went wrong. Please try again.";
+}
+
+function assertRpId(rpId: string): void {
+  // localhost is the one hostname with no dot that is legitimately usable:
+  // WebAuthn treats it as a secure context, so a dev build can point at it.
+  if (rpId === "localhost") return;
+  if (!rpId || rpId === "example.com" || !/^[a-z0-9.-]+$/i.test(rpId) || !rpId.includes(".")) {
+    throw new Error("Set EXPO_PUBLIC_MERA_RP_ID to a hostname your team controls before using passkeys.");
   }
 }
+
+export type { PasskeyCredentialMetadata };

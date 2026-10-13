@@ -12,8 +12,8 @@ export {
 } from "./types.ts";
 export {
   ANVIL_CHAIN_ID,
-  AUSD_FAUCET_TESTNET,
-  AUSD_TESTNET,
+  MONAD_TESTNET_AUSD_ADDRESS,
+  MONAD_TESTNET_AUSD_FAUCET_ADDRESS,
   MONAD_TESTNET_CHAIN_ID,
   RECEIPT_POLL_MS,
   clientFor,
@@ -91,16 +91,17 @@ export {
 } from "./mock.ts";
 export {
   BID_SALT_PREFIX,
-  createAccountWithPasskey,
+  accountFromPrfOutput,
+  createPasskeyAccount,
+  describeMeraError,
   deriveBidSecret,
-  friendlyPasskeyError,
+  endMeraSession,
   meraSigner,
-  requireFreshPasskey,
+  openSigningSession,
   sessionGuard,
-  setSessionLimits,
   signInWithPasskey,
-  signOut,
   type MeraAccount,
   type MeraSessionLimits,
-  type PasskeyAppIdentity,
+  type PasskeyAccountOptions,
+  type PasskeyCredentialMetadata,
 } from "./mera.ts";

@@ -309,11 +309,11 @@ export class ChitCircleClient {
     return { hash, settledInSeconds: (Date.now() - startedAt) / 1000 };
   }
 
-  private write(functionName: string, args: readonly unknown[]): Promise<TxResult> {
+  private write(functionName: string, args: readonly unknown[], noPromptAmount?: bigint): Promise<TxResult> {
     const signer = this.requireSigner();
     const startedAt = Date.now();
     return signer
-      .write({ address: this.address, abi: chitCircleAbi, functionName, args })
+      .write({ address: this.address, abi: chitCircleAbi, functionName, args, noPromptAmount })
       .then((hash) => this.send(hash, startedAt));
   }
 
@@ -376,7 +376,7 @@ export class ChitCircleClient {
   async contribute(circleId: bigint): Promise<TxResult> {
     const circle = await this.getCircle(circleId);
     await this.ensureAllowance(circle.token, circle.contribution);
-    return this.write("contribute", [circleId]);
+    return this.write("contribute", [circleId], circle.contribution);
   }
 
   /** Callable by anyone once the round deadline has passed. */

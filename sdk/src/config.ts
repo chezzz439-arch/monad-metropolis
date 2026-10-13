@@ -4,6 +4,38 @@ import type { ChitSigner } from "./types.ts";
 
 export const MONAD_TESTNET_CHAIN_ID = 10143;
 export const ANVIL_CHAIN_ID = 31337;
+/**
+ * Agora's AUSD on Monad testnet — what circles are denominated in.
+ *
+ * Confirmed against the chain rather than taken from the docs: `name()` and
+ * `symbol()` both return "AUSD" and `decimals()` is 6, which is what
+ * {@link AUSD_DECIMALS} and every amount shown in the UI assume.
+ */
+export const MONAD_TESTNET_AUSD_ADDRESS: Address = "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC";
+
+/**
+ * Agora's AUSD faucet — how the team and the judges get test money. It is a
+ * transparent proxy; the logic lives at 0xba804DF5c476E8EaeF87BF8085F295300ccE2a49.
+ *
+ *     requestFunds(address receiver)   // permissionless, selector 0x544c7cf9
+ *
+ * Read off the live contract: $10,000 AUSD per call, a 60-second cooldown, and
+ * it refuses once the receiver already holds $100,000 (`MaxAmountToOwn`). One
+ * call funds a member many times over — a $100 x 5 circle needs $600 a head.
+ *
+ * THE COOLDOWN IS GLOBAL TO THE FAUCET, NOT PER CALLER OR PER RECEIVER.
+ * Confirmed on 12 Oct 2026: a second account that had never touched the faucet
+ * was rejected with `MaxFrequencyExceeded` (0x20e5bc67) seconds after an
+ * unrelated address claimed. So members cannot all fund themselves at once —
+ * one claim per minute across the whole world. For the demo, claim once to a
+ * single address and `transfer` onward; do not put a "get test money" button in
+ * a flow several people run together.
+ *
+ *     cast send 0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C \
+ *       "requestFunds(address)" <ADDRESS> \
+ *       --rpc-url https://testnet-rpc.monad.xyz --interactive
+ */
+export const MONAD_TESTNET_AUSD_FAUCET_ADDRESS: Address = "0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C";
 
 /**
  * One deployed instance of the app. Everything chain-specific lives here, so
@@ -29,39 +61,6 @@ export interface Deployment {
 }
 
 /**
- * Agora's AUSD on Monad testnet — the stablecoin circles are denominated in.
- *
- * Confirmed against the chain rather than taken from the docs: `name()` and
- * `symbol()` both return "AUSD" and `decimals()` is 6, which is what
- * {@link AUSD_DECIMALS} and every amount shown in the UI assume.
- */
-export const AUSD_TESTNET = "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC" as Address;
-
-/**
- * Agora's AUSD faucet — how the team and the judges get test money. It is a
- * transparent proxy; the logic lives at 0xba804DF5c476E8EaeF87BF8085F295300ccE2a49.
- *
- *     requestFunds(address receiver)   // permissionless, selector 0x544c7cf9
- *
- * Read off the live contract: $10,000 AUSD per call, a 60-second cooldown, and
- * it refuses once the receiver already holds $100,000 (`MaxAmountToOwn`). One
- * call funds a member many times over — a $100 x 5 circle needs $600 a head.
- *
- * THE COOLDOWN IS GLOBAL TO THE FAUCET, NOT PER CALLER OR PER RECEIVER.
- * Confirmed on 12 Oct 2026: a second account that had never touched the faucet
- * was rejected with `MaxFrequencyExceeded` (0x20e5bc67) seconds after an
- * unrelated address claimed. So members cannot all fund themselves at once —
- * one claim per minute across the whole world. For the demo, claim once to a
- * single address and `transfer` onward; do not put a "get test money" button in
- * a flow several people run together.
- *
- *     cast send 0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C \
- *       "requestFunds(address)" <ADDRESS> \
- *       --rpc-url https://testnet-rpc.monad.xyz --interactive
- */
-export const AUSD_FAUCET_TESTNET = "0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C" as Address;
-
-/**
  * Monad testnet — live and complete as of 12 Oct 2026.
  *
  * Deployed by `contracts/script/Deploy.s.sol`, verified on Sourcify (`match`):
@@ -78,7 +77,7 @@ export const monadTestnet: Deployment = {
   chainId: MONAD_TESTNET_CHAIN_ID,
   rpcUrl: "https://testnet-rpc.monad.xyz",
   chitCircle: "0x13ec22E7d0BF5b728549990aA852d03BCC9da73D" as Address,
-  token: AUSD_TESTNET,
+  token: MONAD_TESTNET_AUSD_ADDRESS,
   deployBlock: 70523429n,
   inviteBaseUrl: "https://chitcircle.app",
 };

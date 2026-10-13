@@ -1,163 +1,217 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Address } from "viem";
+import { createSecp256k1SigningSession, getEvmAddress } from "@category-labs/mera";
+import { hexToBytes, type Address } from "viem";
 import {
   BID_SALT_PREFIX,
-  bidSalt,
-  friendlyPasskeyError,
+  accountFromPrfOutput,
+  describeMeraError,
+  endMeraSession,
   meraSigner,
   sessionGuard,
-  setSessionLimits,
   type MeraAccount,
   type MeraSessionLimits,
 } from "../src/mera.ts";
-import { monadTestnet } from "../src/config.ts";
 
-const CIRCLE = "0x13ec22E7d0BF5b728549990aA852d03BCC9da73D" as Address;
-const TOKEN = "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC" as Address;
-const ME = "0x37B474295Af1989bD53d7A7B90746FD6E3290373" as Address;
-const FRIEND = "0x8fbd38532aB74419aA12fc309b2A2c4002c9d2bB" as Address;
-
-function limits(over: Partial<MeraSessionLimits> = {}): MeraSessionLimits {
-  return {
-    contract: CIRCLE,
-    maxAmountPerTx: 100_000000n, // $100
-    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-    ...over,
-  };
-}
+const contract = "0x1111111111111111111111111111111111111111" as const;
+const otherContract = "0x2222222222222222222222222222222222222222" as const;
+const token = "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC" as const;
+const friend = "0x8fbd38532aB74419aA12fc309b2A2c4002c9d2bB" as const;
+const activeLimits: MeraSessionLimits = {
+  contract,
+  maxAmountPerTx: 100_000_000n,
+  expiresAt: new Date(Date.now() + 60_000),
+};
 
 /**
- * A MeraAccount without an authenticator. The session and viem account are
- * never reached: every test here asserts the guard rejects BEFORE signing, so
- * if one ever does reach them the thrown error is the test failing loudly.
+ * Thrown by `nativeWebAuthnClient()` under node, where the React Native
+ * WebAuthn module cannot be imported. Several tests below use it as proof that
+ * a code path reached the re-prompt — there is no other way to observe "a
+ * passkey ceremony was requested" without a real authenticator.
  */
-function fakeAccount(l: MeraSessionLimits | null): MeraAccount {
-  const explode = (): never => {
-    throw new Error("guard let a forbidden write through to signing");
-  };
-  return {
-    address: ME,
-    limits: l,
-    session: {
-      publicKey: new Uint8Array(65),
-      signDigest: explode,
-      end() {},
-      [Symbol.dispose]() {},
-    } as unknown as MeraAccount["session"],
-    viemAccount: { address: ME, type: "local", signTransaction: explode } as unknown as MeraAccount["viemAccount"],
-    credential: { credentialId: "dGVzdA" },
-  };
+const RE_PROMPTED = /native development build/;
+
+/** An address that refuses connections, so a write that reaches the network fails fast. */
+const DEAD_RPC = "http://127.0.0.1:1";
+
+function prfAccount(over: Partial<MeraAccount> = {}): MeraAccount {
+  const account = accountFromPrfOutput(
+    { credentialId: "credential", prfOutput: Uint8Array.from({ length: 32 }, (_, i) => i + 1) },
+    { rpId: "accounts.example", contract, maxAmountPerTx: 100_000_000n },
+  );
+  return Object.assign(account, over);
 }
 
-// -- sessionGuard: the only thing enforcing limits -------------------------
+async function errorFrom(run: () => Promise<unknown>): Promise<string> {
+  try {
+    await run();
+  } catch (error) {
+    return String(error instanceof Error ? error.message : error);
+  }
+  throw new Error("expected the call to fail, but it resolved");
+}
 
-test("no session means nothing is allowed", () => {
-  const v = sessionGuard(null, CIRCLE, 1n);
-  assert.equal(v.allowed, false);
-  assert.match(v.reason!, /No active signing session/);
+// -- sessionGuard: what the prompt-free path is allowed to do ---------------
+
+test("prompt-free guard allows a bounded contribution to the scoped contract", () => {
+  assert.deepEqual(sessionGuard(activeLimits, contract, 100_000_000n), { allowed: true });
 });
 
-test("a write to the scoped contract within the cap is allowed", () => {
-  assert.equal(sessionGuard(limits(), CIRCLE, 100_000000n).allowed, true);
+test("prompt-free guard rejects missing or expired sessions", () => {
+  assert.equal(sessionGuard(null, contract, 1n).allowed, false);
+  assert.equal(sessionGuard({ ...activeLimits, expiresAt: new Date(Date.now() - 1) }, contract, 1n).allowed, false);
 });
 
-test("one unit over the cap is refused", () => {
-  const v = sessionGuard(limits(), CIRCLE, 100_000001n);
-  assert.equal(v.allowed, false);
-  assert.match(v.reason!, /per-transaction cap/);
+test("prompt-free guard rejects another contract and amounts over the cap", () => {
+  assert.equal(sessionGuard(activeLimits, otherContract, 1n).allowed, false);
+  assert.equal(sessionGuard(activeLimits, contract, 100_000_001n).allowed, false);
 });
 
-test("a different contract is refused even within the cap", () => {
-  const v = sessionGuard(limits(), TOKEN, 1n);
-  assert.equal(v.allowed, false);
-  assert.match(v.reason!, /not scoped to this contract/);
+test("each refusal names the real reason, because the UI shows it", () => {
+  assert.match(sessionGuard(null, contract, 1n).reason!, /No active signing session/);
+  assert.match(sessionGuard(activeLimits, contract, 100_000_001n).reason!, /per-transaction cap/);
+  assert.match(sessionGuard(activeLimits, otherContract, 1n).reason!, /not scoped to this contract/);
 });
 
 test("scope check is case-insensitive, so a lowercased address still passes", () => {
-  // Addresses arrive from links, logs and user input in every casing. A guard
-  // that refused a lowercased address would look like a random failure.
-  assert.equal(sessionGuard(limits(), CIRCLE.toLowerCase() as Address, 1n).allowed, true);
-});
-
-test("an expired session is refused", () => {
-  const v = sessionGuard(limits({ expiresAt: new Date(Date.now() - 1000) }), CIRCLE, 1n);
-  assert.equal(v.allowed, false);
-  assert.match(v.reason!, /expired/);
+  // Addresses arrive from invite links, logs and user input in every casing. A
+  // guard that refused a lowercased address would look like a random failure.
+  assert.equal(sessionGuard(activeLimits, contract.toLowerCase() as Address, 1n).allowed, true);
 });
 
 test("expiry is checked before the cap, so the message names the real problem", () => {
   const v = sessionGuard(
-    limits({ expiresAt: new Date(Date.now() - 1000), maxAmountPerTx: 1n }),
-    CIRCLE,
+    { ...activeLimits, expiresAt: new Date(Date.now() - 1000), maxAmountPerTx: 1n },
+    contract,
     999n,
   );
   assert.match(v.reason!, /expired/, "an expired session is the thing to tell the user");
 });
 
-// -- meraSigner: the guard must run before any signing --------------------
+// -- key derivation --------------------------------------------------------
 
-test("the signer refuses a write with no session, without signing", async () => {
-  const signer = meraSigner(fakeAccount(null), monadTestnet);
-  await assert.rejects(
-    signer.write({ address: CIRCLE, abi: [], functionName: "contribute", args: [0n] }),
-    /No active signing session/,
-  );
+test("a PRF output deterministically derives the same address and is zeroed", () => {
+  const options = { rpId: "accounts.example", contract, maxAmountPerTx: 100_000_000n };
+  const firstOutput = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+  const secondOutput = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+  const first = accountFromPrfOutput({ credentialId: "credential", prfOutput: firstOutput }, options);
+  const second = accountFromPrfOutput({ credentialId: "credential", prfOutput: secondOutput }, options);
+
+  assert.match(first.address, /^0x[0-9a-fA-F]{40}$/);
+  assert.equal(first.address, second.address);
+  assert.ok(firstOutput.every((byte) => byte === 0));
+  assert.ok(secondOutput.every((byte) => byte === 0));
+
+  endMeraSession(first);
+  endMeraSession(second);
 });
 
-test("the signer refuses a write to an out-of-scope contract", async () => {
-  const signer = meraSigner(fakeAccount(limits()), monadTestnet);
-  await assert.rejects(
-    signer.write({ address: TOKEN, abi: [], functionName: "approve", args: [] }),
-    /not scoped to this contract/,
+test("Mera derives the standard EVM address for the Anvil fixture key", async () => {
+  const session = createSecp256k1SigningSession({
+    privateKey: hexToBytes("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+  });
+  const account = accountFromPrfOutput(
+    { credentialId: "local-test", prfOutput: Uint8Array.from({ length: 32 }, (_, index) => index + 1) },
+    { rpId: "accounts.example", contract, maxAmountPerTx: 100_000_000n },
   );
+  endMeraSession(account);
+
+  assert.equal(getEvmAddress(session.publicKey).toLowerCase(), "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
+  session.end();
 });
 
-test("the signer refuses a send over the cap", async () => {
-  const signer = meraSigner(fakeAccount(limits()), monadTestnet);
-  await assert.rejects(
-    signer.transferToken({ token: TOKEN, to: FRIEND, amount: 500_000000n }),
-    /per-transaction cap/,
+test("a different PRF output gives a different account", () => {
+  const first = prfAccount();
+  const second = accountFromPrfOutput(
+    { credentialId: "credential", prfOutput: Uint8Array.from({ length: 32 }, (_, i) => i + 9) },
+    { rpId: "accounts.example", contract, maxAmountPerTx: 100_000_000n },
   );
+  assert.notEqual(first.address, second.address, "two passkeys must not collapse to one account");
+  endMeraSession(first);
+  endMeraSession(second);
 });
 
-test("the signer refuses a send once the session has expired", async () => {
-  const signer = meraSigner(fakeAccount(limits({ expiresAt: new Date(Date.now() - 1) })), monadTestnet);
-  await assert.rejects(
-    signer.transferToken({ token: TOKEN, to: FRIEND, amount: 1n }),
-    /expired/,
+// -- meraSigner: only a capped contribution may skip the prompt -------------
+//
+// This is the security model: every write re-prompts for the passkey EXCEPT a
+// `contribute` whose amount passes sessionGuard. These tests pin both halves.
+// Keeping the silent path narrow matters more than any other check here.
+
+test("a contribution within the cap is signed without re-prompting", async () => {
+  const account = prfAccount();
+  const signer = meraSigner(account, DEAD_RPC);
+  const message = await errorFrom(() =>
+    signer.write({ address: contract, abi: [], functionName: "contribute", args: [0n], noPromptAmount: 1n }),
   );
+  // It failed at the network, not at the authenticator, so nothing prompted.
+  assert.doesNotMatch(message, RE_PROMPTED);
+  endMeraSession(account);
+});
+
+test("a contribution OVER the cap re-prompts instead of signing silently", async () => {
+  const account = prfAccount();
+  const signer = meraSigner(account, DEAD_RPC);
+  const message = await errorFrom(() =>
+    signer.write({
+      address: contract,
+      abi: [],
+      functionName: "contribute",
+      args: [0n],
+      noPromptAmount: 100_000_001n,
+    }),
+  );
+  assert.match(message, RE_PROMPTED, "an over-cap contribution must not be signed silently");
+  endMeraSession(account);
+});
+
+test("a contribution to an out-of-scope contract re-prompts", async () => {
+  const account = prfAccount();
+  const signer = meraSigner(account, DEAD_RPC);
+  const message = await errorFrom(() =>
+    signer.write({ address: otherContract, abi: [], functionName: "contribute", args: [0n], noPromptAmount: 1n }),
+  );
+  assert.match(message, RE_PROMPTED);
+  endMeraSession(account);
+});
+
+test("a contribution on an expired session re-prompts", async () => {
+  const account = prfAccount({ limits: { ...activeLimits, expiresAt: new Date(Date.now() - 1) } });
+  const signer = meraSigner(account, DEAD_RPC);
+  const message = await errorFrom(() =>
+    signer.write({ address: contract, abi: [], functionName: "contribute", args: [0n], noPromptAmount: 1n }),
+  );
+  assert.match(message, RE_PROMPTED);
+  endMeraSession(account);
+});
+
+test("a write with no declared amount re-prompts, even to the scoped contract", async () => {
+  // join/settleRound/withdrawDeposit never set noPromptAmount, so all must prompt.
+  const account = prfAccount();
+  const signer = meraSigner(account, DEAD_RPC);
+  for (const functionName of ["join", "settleRound", "withdrawDeposit"]) {
+    const message = await errorFrom(() =>
+      signer.write({ address: contract, abi: [], functionName, args: [0n] }),
+    );
+    assert.match(message, RE_PROMPTED, `${functionName} must ask for the passkey`);
+  }
+  endMeraSession(account);
+});
+
+test("a member-to-member send always re-prompts, however small", async () => {
+  const account = prfAccount();
+  const signer = meraSigner(account, DEAD_RPC);
+  const message = await errorFrom(() => signer.transferToken({ token, to: friend, amount: 1n }));
+  assert.match(message, RE_PROMPTED, "sending money out is never prompt-free");
+  endMeraSession(account);
 });
 
 test("the signer reports the account address the hooks will display", () => {
-  assert.equal(meraSigner(fakeAccount(limits()), monadTestnet).address, ME);
+  const account = prfAccount();
+  assert.equal(meraSigner(account, DEAD_RPC).address, account.address);
+  endMeraSession(account);
 });
 
-// -- setSessionLimits ------------------------------------------------------
-
-test("setSessionLimits turns a signed-in account into one that can write", () => {
-  const account = fakeAccount(null);
-  assert.equal(sessionGuard(account.limits, CIRCLE, 1n).allowed, false);
-  setSessionLimits(account, limits());
-  assert.equal(sessionGuard(account.limits, CIRCLE, 1n).allowed, true);
-});
-
-// -- bid secrets ----------------------------------------------------------
-
-test("a bid salt is 32 bytes, as WebAuthn PRF requires", () => {
-  assert.equal(bidSalt(0n, 0).length, 32, "Mera rejects a salt that is not 32 bytes");
-});
-
-test("the same circle and round always give the same salt", () => {
-  // This is the cross-device test: commit a bid on one phone, reveal on
-  // another. Any nondeterminism here strands the bid forever.
-  assert.deepEqual(bidSalt(7n, 3), bidSalt(7n, 3));
-});
-
-test("different rounds and circles give unrelated salts", () => {
-  assert.notDeepEqual(bidSalt(7n, 3), bidSalt(7n, 4));
-  assert.notDeepEqual(bidSalt(7n, 3), bidSalt(8n, 3));
-});
+// -- bid secrets -----------------------------------------------------------
 
 test("the salt prefix is namespaced, so a bid secret cannot collide with the account key", () => {
   assert.match(BID_SALT_PREFIX, /^chitcircle:/);
@@ -176,13 +230,13 @@ test("error copy never uses the words the team guide bans", () => {
     "SOMETHING_NEW_WE_HAVE_NOT_SEEN",
   ];
   for (const code of codes) {
-    const msg = friendlyPasskeyError(Object.assign(new Error("boom"), { name: "MeraError", code }));
+    const msg = describeMeraError(Object.assign(new Error("boom"), { name: "MeraError", code }));
     assert.doesNotMatch(msg, banned, `copy for ${code} leaks a forbidden word: ${msg}`);
     assert.ok(msg.length > 0);
   }
 });
 
 test("a non-Mera error still gets safe copy rather than leaking internals", () => {
-  const msg = friendlyPasskeyError(new Error("ECONNREFUSED 127.0.0.1:8545"));
+  const msg = describeMeraError(new Error("ECONNREFUSED 127.0.0.1:8545"));
   assert.doesNotMatch(msg, /ECONNREFUSED|8545/);
 });

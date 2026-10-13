@@ -104,7 +104,7 @@ missing rather than handing back a half config. Don't hardcode an address in a
 screen.
 
 A `client` built this way has no signer, so reads work and every write throws
-`"No signer: sign in with a passkey first."` Pass `meraSigner(account, monadTestnet)`
+`"No signer: sign in with a passkey first."` Pass `meraSigner(account, monadTestnet.rpcUrl)`
 as the second argument once you have an account — see "Passkey accounts" below.
 
 ## Every hook returns one of two shapes
@@ -310,40 +310,51 @@ AUSD_DECIMALS                  // 6
 Sign-up is one ceremony. Sign-in is one ceremony. Nothing is stored anywhere.
 
 ```ts
-const app = { rpId: location.hostname, rpName: "Chit Circle" };
+const options = {
+  rpId: process.env.EXPO_PUBLIC_MERA_RP_ID,   // a host we control, or "localhost"
+  contract: monadTestnet.chitCircle,          // what the prompt-free path is scoped to
+  maxAmountPerTx: parseAmount("100"),
+};
 
 // New user. One fingerprint/face prompt, and they have an account.
-const account = await createAccountWithPasskey(app);
+const account = await createPasskeyAccount(options);
 
 // Returning user, or a device that has never seen this app. Same account.
-const account = await signInWithPasskey(app);
+const account = await signInWithPasskey(options);
 
 // A new account cannot pay for its first action, so seed it first.
 await dripper.ensure(account.address);     // one on-chain tx — NOT instant
 
-// Allow silent payments to the circle, capped, for an hour.
-setSessionLimits(account, {
-  contract: monadTestnet.chitCircle,
-  maxAmountPerTx: parseAmount("100"),
-  expiresAt: new Date(Date.now() + 3_600_000),
-});
-
-const client = clientFor(monadTestnet, meraSigner(account, monadTestnet));
+const client = clientFor(monadTestnet, meraSigner(account, monadTestnet.rpcUrl));
 ```
 
-`signInWithPasskey(app)` with no second argument is the **stateless restore**:
+`signInWithPasskey(options)` with no `credential` is the **stateless restore**:
 WebAuthn offers any passkey for `rpId`, and the same passkey always produces the
 same account. Clear app storage, use another phone — same account, nothing lost.
 That is the Mera UX bounty's test and it needs no code from you.
+
+### When the user is asked to confirm
+
+Every write re-prompts for the passkey, with one exception: a `contribute` whose
+amount passes `sessionGuard` is signed from the live session with no prompt. That
+is the "tap Pay, it just pays" moment. `client.contribute()` declares the amount
+for you, so you get this for free — and nothing else is ever silent, including
+member-to-member sends.
 
 Things to get right in the UI:
 
 | Rule | Why |
 |---|---|
 | After the passkey prompt, show "Setting up your account…" | Funding the new account is a real transaction. Jumping straight to Home shows an account that cannot pay yet. |
-| Show `friendlyPasskeyError(err)`, never `err.message` | Mera's own errors mention authenticators and crypto. `friendlyPasskeyError` is tested to never use the six banned words. |
-| Call `requireFreshPasskey(app, account)` before a member-to-member send | Once a session exists, Mera signs **with no prompt at all**. A send is the one action that should still feel deliberate, so we re-ask with a real gesture. |
-| Call `signOut(account)` on sign-out | It zeroes the in-memory key. Dropping the object alone does not. |
+| Show `describeMeraError(err)`, never `err.message` | Mera's own errors mention authenticators and crypto. `describeMeraError` is tested to never use the six banned words, for every error code and for unrecognised ones. |
+| Expect a prompt on join, settle, withdraw and send | Only a capped contribution skips it. Don't build a UI that assumes those are instant. |
+| Call `endMeraSession(account)` on sign-out | It zeroes the in-memory key. Dropping the object alone does not. |
+
+**Passkeys need a native build.** `nativeWebAuthnClient()` throws
+"Passkeys require a native development build" under Expo Go and under node, so
+run the demo with `npm run start:dev`, not `npm start`. An HTTPS `rpId` also
+needs the Apple/Android association files published — see
+`scripts/generate-passkey-associations.mjs`.
 
 **Be honest about the limits in the demo and the pitch.** Mera has no concept of
 session limits: no contract allow-list, no per-transaction cap, no expiry. Ours
@@ -354,10 +365,10 @@ Saying "the protocol enforces this" would be untrue.
 
 | Thing | State |
 |---|---|
-| Mera passkey sign-in, signing session, PRF | **Written** against `@category-labs/mera` 0.2.0 — see "Passkey accounts" below. Typechecks, and 19 tests cover the limit guard and bid-salt determinism. **Not yet run against a real authenticator**, because WebAuthn needs a browser on a device; that test is a phone, not a terminal. Until someone taps it on a real phone, treat sign-in as unproven and keep using `mockClient({ signedOut: true })` for the signed-out gate. |
+| Mera passkey sign-in, signing session, PRF | **Written** against `@category-labs/mera` 0.2.0 — see "Passkey accounts" above. Typechecks, and 26 tests cover key derivation, the limit guard and which writes are allowed to skip the prompt. **The ceremony itself has not been run against a real authenticator on this branch**: WebAuthn needs a device, and that test is a phone, not a terminal. Run it with `npm run start:dev` on a real phone before relying on it; keep `mockClient({ signedOut: true })` for the signed-out gate until then. |
 | Bid mode (`commitBid` / `revealBid`) | Contract reverts `NotImplemented`. Stretch goal — don't build bid UI yet. |
 | Account funding on sign-up | **Done** (`GasDripper` in `gas.ts`), waiting on Mera. **Aadit:** a brand-new account has to be seeded before its first payment, and that is one on-chain transaction, so sign-up is *not* instant — show "Setting up your account…" after the passkey prompt rather than jumping straight to Home. Still one prompt; just not zero wait. |
-| AUSD token address | **Confirmed.** `AUSD_TESTNET` in `config.ts`, verified on-chain as 6-decimal "AUSD". |
+| AUSD token address | **Confirmed.** `MONAD_TESTNET_AUSD_ADDRESS` in `config.ts`, verified on-chain as 6-decimal "AUSD". |
 | ChitCircle address, deploy block | **Live.** `0x13ec22E7d0BF5b728549990aA852d03BCC9da73D`, block 70523429, Sourcify-verified. Filled into `monadTestnet`, so `clientFor(monadTestnet)` now works against the real chain. The mock is still the faster way to build screens — switch when your screen is done, not before. |
 | Getting test dollars (AUSD faucet) | Works, but the faucet's 60-second cooldown is **global**, not per user — a second address was refused (`MaxFrequencyExceeded`) right after an unrelated one claimed. Don't build a "get test money" button that several people tap at once. Claim once, then `transfer` onward. |
 | Invite landing page | Not built. Until it exists, an https link opens a browser, not the app. |

@@ -208,7 +208,7 @@ Merge into `main` through pull requests. Freeze `main` at **Oct 13, 12 PM ET**.
 
 | Risk | Impact | Plan |
 |---|---|---|
-| No testnet AUSD | We miss the Agora bounty ($10k) | Ask Agora tonight. Check docs.agora.finance/contract-overview. Fallback decision by Sat noon |
+| AUSD faucet access | We cannot fund real test transactions | Use Agora's published Monad testnet AUSD (`0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC`) and faucet (`0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C`); verify availability before the demo |
 | Mera React Native issues | Blocks everything | Kaushik tests the React Native recipe first thing. Fallback: mobile web app (PWA) with passkeys. Check this still counts as "mobile app" for Agora |
 | Signing session limits weaker than planned | Lower Mera UX score | Enforce in the app and say so honestly |
 | Bid mode doesn't finish | Lose Many Keys only | It's a stretch goal; the fixed-order flow is enough for everything else |
