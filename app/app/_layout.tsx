@@ -1,48 +1,33 @@
-import { useFonts } from 'expo-font';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import 'react-native-reanimated';
-import {
-  ChitCircleProvider,
-  clientFor,
-  monadTestnet,
-  requireDeployment,
-} from '@chitcircle/sdk';
 
+import { useFonts } from 'expo-font';
+import {
+  DarkTheme,
+  DefaultTheme,
+  Stack,
+  ThemeProvider,
+} from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { useEffect, useMemo } from 'react';
+import 'react-native-reanimated';
+
+import { ChitCircleProvider } from '@chitcircle/sdk/src/hooks';
+import { mockClient } from '@chitcircle/sdk/src/mock';
 
 import { useColorScheme } from '@/components/useColorScheme';
 
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
+export { ErrorBoundary } from 'expo-router';
 
 export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
   initialRouteName: '(tabs)',
 };
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
-
-
-const sdkReady = Boolean(
-  monadTestnet.chitCircle &&
-  monadTestnet.token &&
-  monadTestnet.deployBlock !== undefined
-);
-
-const chitClient = sdkReady
-  ? clientFor(requireDeployment(monadTestnet))
-  : null;
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
 
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
   useEffect(() => {
     if (error) throw error;
   }, [error]);
@@ -60,35 +45,48 @@ export default function RootLayout() {
   return <RootLayoutNav />;
 }
 
-
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
 
-  const navigation = (
-    <Stack>
-      <Stack.Screen
-        name="(tabs)"
-        options={{ headerShown: false }}
-      />
-      <Stack.Screen
-        name="modal"
-        options={{ presentation: 'modal' }}
-      />
-    </Stack>
+  // Standard mock demo: Round 1 active,
+  // with two members having already contributed.
+  const client = useMemo(
+    () => mockClient({ scenario: 'midRound' }),
+    []
   );
 
   return (
-    <ThemeProvider
-      value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}
-    >
-      {chitClient ? (
-        <ChitCircleProvider value={chitClient}>
-          {navigation}
-        </ChitCircleProvider>
-      ) : (
-        navigation
-      )}
-    </ThemeProvider>
+    <ChitCircleProvider value={client}>
+      <ThemeProvider
+        value={
+          colorScheme === 'dark'
+            ? DarkTheme
+            : DefaultTheme
+        }
+      >
+        <Stack>
+          <Stack.Screen
+            name="(tabs)"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="create"
+            options={{ title: 'Create Circle' }}
+          />
+          <Stack.Screen
+            name="join"
+            options={{ title: 'Join Circle' }}
+          />
+          <Stack.Screen
+            name="circle/[id]"
+            options={{ title: 'Circle Details' }}
+          />
+          <Stack.Screen
+            name="modal"
+            options={{ presentation: 'modal' }}
+          />
+        </Stack>
+      </ThemeProvider>
+    </ChitCircleProvider>
   );
 }
-

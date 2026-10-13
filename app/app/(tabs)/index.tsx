@@ -6,12 +6,29 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 
+import { useMyCircles } from '@chitcircle/sdk/src/hooks';
+import { MOCK_PEOPLE } from '@chitcircle/sdk/src/mock';
+import { formatUsd } from '@chitcircle/sdk/src/format';
+
 export default function HomeScreen() {
+  const {
+    data: circles,
+    loading,
+    error,
+    refresh,
+  } = useMyCircles(MOCK_PEOPLE[0].address);
+
+
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.content}
+    >
+      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.logo}>◉ Chit Circle</Text>
         <Text style={styles.subtitle}>
@@ -19,17 +36,18 @@ export default function HomeScreen() {
         </Text>
       </View>
 
+      {/* Hero */}
       <View style={styles.hero}>
         <Text style={styles.heroTitle}>
           Better saving starts together.
         </Text>
         <Text style={styles.heroText}>
           Save with people you trust. Every contribution
-          is protected by clear rules, and everyone
-          gets their turn.
+          follows clear rules, and everyone gets their turn.
         </Text>
       </View>
 
+      {/* Actions */}
       <Text style={styles.sectionTitle}>Get started</Text>
 
       <Pressable
@@ -50,19 +68,130 @@ export default function HomeScreen() {
         </Text>
       </Pressable>
 
-      <Text style={styles.sectionTitle}>My Circles</Text>
-
-      <View style={styles.emptyCard}>
-        <Text style={styles.emptyIcon}>◎</Text>
-        <Text style={styles.emptyTitle}>
-          No circles yet
-        </Text>
-        <Text style={styles.emptyText}>
-          Create your first savings circle or join one
-          using an invitation.
-        </Text>
+      {/* My Circles */}
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>My Circles</Text>
+        <Pressable onPress={refresh}>
+          <Text style={styles.refreshText}>
+            Refresh ↻
+          </Text>
+        </Pressable>
       </View>
 
+      {loading ? (
+        <View style={styles.emptyCard}>
+          <ActivityIndicator
+            size="large"
+            color="#4834D4"
+          />
+          <Text style={styles.emptyText}>
+            Loading your circles...
+          </Text>
+        </View>
+      ) : error ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>
+            Unable to load circles
+          </Text>
+          <Text style={styles.errorText}>
+            {error.message}
+          </Text>
+          <Pressable onPress={refresh}>
+            <Text style={styles.refreshText}>
+              Try Again
+            </Text>
+          </Pressable>
+        </View>
+      ) : (circles ?? []).length === 0 ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyIcon}>◎</Text>
+          <Text style={styles.emptyTitle}>
+            No circles yet
+          </Text>
+          <Text style={styles.emptyText}>
+            Create your first savings circle or join
+            one using an invitation.
+          </Text>
+        </View>
+      ) : (
+        (circles ?? []).map((circle) => (
+          <Pressable
+            key={String(circle.circleId)}
+            style={styles.circleCard}
+            onPress={() =>
+              router.push({
+                pathname: '/circle/[id]',
+                params: {
+                  id: String(circle.circleId),
+                },
+              })
+            }
+          >
+            <View style={styles.circleHeader}>
+              <Text style={styles.circleTitle}>
+                Circle #{String(circle.circleId)}
+              </Text>
+
+              <View style={styles.statusBadge}>
+                <Text style={styles.statusText}>
+                  {circle.finished
+                    ? 'Finished'
+                    : circle.started
+                    ? 'Active'
+                    : 'Filling'}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.circleLabel}>
+              Contribution per round
+            </Text>
+
+            <Text style={styles.circleAmount}>
+              {formatUsd(circle.contribution)}
+            </Text>
+
+            <View style={styles.circleStats}>
+              <View>
+                <Text style={styles.statLabel}>
+                  Members
+                </Text>
+                <Text style={styles.statValue}>
+                  {circle.members.length}/{circle.maxMembers}
+                </Text>
+              </View>
+
+              <View>
+                <Text style={styles.statLabel}>
+                  Round
+                </Text>
+                <Text style={styles.statValue}>
+                  {circle.finished
+                    ? 'Completed'
+                    : circle.started
+                    ? `${circle.round + 1}/${circle.maxMembers}`
+                    : 'Waiting'}
+                </Text>
+              </View>
+
+              <View>
+                <Text style={styles.statLabel}>
+                  Current Pot
+                </Text>
+                <Text style={styles.statValue}>
+                  {formatUsd(circle.pot)}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.viewDetails}>
+              View Circle Details →
+            </Text>
+          </Pressable>
+        ))
+      )}
+
+      {/* Footer */}
       <View style={styles.footer}>
         <Text style={styles.footerText}>
           Simple saving. Transparent rules.
@@ -121,6 +250,17 @@ const styles = StyleSheet.create({
     color: '#172033',
     marginBottom: 16,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  refreshText: {
+    color: '#4834D4',
+    fontWeight: '700',
+    fontSize: 14,
+    marginBottom: 12,
+  },
   primaryButton: {
     backgroundColor: '#4834D4',
     padding: 18,
@@ -171,6 +311,74 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 9,
     lineHeight: 21,
+  },
+  errorText: {
+    color: '#DC2626',
+    fontSize: 14,
+    textAlign: 'center',
+    marginVertical: 15,
+  },
+  circleCard: {
+    backgroundColor: '#FFFFFF',
+    padding: 22,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E8EAF0',
+    marginBottom: 15,
+  },
+  circleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  circleTitle: {
+    fontSize: 19,
+    fontWeight: '800',
+    color: '#172033',
+  },
+  statusBadge: {
+    backgroundColor: '#EDEAFF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  statusText: {
+    color: '#4834D4',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  circleLabel: {
+    color: '#64748B',
+    fontSize: 13,
+  },
+  circleAmount: {
+    fontSize: 30,
+    fontWeight: '800',
+    color: '#4834D4',
+    marginTop: 5,
+    marginBottom: 20,
+  },
+  circleStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  statLabel: {
+    color: '#64748B',
+    fontSize: 12,
+    marginBottom: 6,
+  },
+  statValue: {
+    color: '#172033',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  viewDetails: {
+    color: '#4834D4',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'right',
   },
   footer: {
     marginTop: 36,
