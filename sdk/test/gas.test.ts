@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseEther, type Address, type Hash } from "viem";
 import {
+  DEFAULT_DOLLAR_GRANT,
+  DEFAULT_DOLLAR_MIN,
   DEFAULT_MIN_BALANCE,
   DEFAULT_TOP_UP_TO,
   FunderEmptyError,
@@ -12,12 +14,15 @@ import {
 
 const NEW_ACCOUNT = "0x00000000000000000000000000000000000000a1" as Address;
 const FUNDER = "0x00000000000000000000000000000000000000f0" as Address;
+const AUSD = "0x00000000000000000000000000000000000000d0" as Address;
 
 /** A chain whose balances we control, recording what the funder sent. */
-function fakeChain(balances: Record<string, bigint>) {
+function fakeChain(balances: Record<string, bigint>, dollars?: Record<string, bigint>) {
   const sends: { to: Address; amount: bigint }[] = [];
+  const tokenSends: { to: Address; amount: bigint }[] = [];
   let nextHash = 0;
   let receiptWaits = 0;
+  const dollarBook = dollars ?? {};
 
   const funder: GasFunder = {
     address: FUNDER,
@@ -25,6 +30,12 @@ function fakeChain(balances: Record<string, bigint>) {
       sends.push({ to, amount });
       balances[FUNDER.toLowerCase()] = (balances[FUNDER.toLowerCase()] ?? 0n) - amount;
       balances[to.toLowerCase()] = (balances[to.toLowerCase()] ?? 0n) + amount;
+      return `0x${(++nextHash).toString(16).padStart(64, "0")}` as Hash;
+    },
+    async sendToken({ to, amount }) {
+      tokenSends.push({ to, amount });
+      dollarBook[FUNDER.toLowerCase()] = (dollarBook[FUNDER.toLowerCase()] ?? 0n) - amount;
+      dollarBook[to.toLowerCase()] = (dollarBook[to.toLowerCase()] ?? 0n) + amount;
       return `0x${(++nextHash).toString(16).padStart(64, "0")}` as Hash;
     },
   };
@@ -37,9 +48,28 @@ function fakeChain(balances: Record<string, bigint>) {
       receiptWaits++;
       return {};
     },
+    async getTokenBalance({ address }: { token: Address; address: Address }) {
+      return dollarBook[address.toLowerCase()] ?? 0n;
+    },
   };
 
-  return { funder, publicClient, sends, balances, stats: () => ({ receiptWaits }) };
+  return { funder, publicClient, sends, tokenSends, balances, dollarBook, stats: () => ({ receiptWaits }) };
+}
+
+/** A dripper stocked with both MON and test dollars. */
+function fundedDripper(dollarStock = DEFAULT_DOLLAR_GRANT * 10n) {
+  const chain = fakeChain(
+    { [FUNDER.toLowerCase()]: parseEther("5") },
+    { [FUNDER.toLowerCase()]: dollarStock },
+  );
+  return {
+    chain,
+    dripper: new GasDripper({
+      funder: chain.funder,
+      publicClient: chain.publicClient,
+      dollars: { token: AUSD },
+    }),
+  };
 }
 
 test("a brand-new account is topped up to the target", async () => {
@@ -185,6 +215,142 @@ test("a malformed funder key reads as not-configured rather than throwing", asyn
   ]) {
     assert.equal(isFunderKey(bad), false, `rejected: ${JSON.stringify(bad)}`);
   }
+});
+
+// -- test dollars ----------------------------------------------------------
+//
+// Funding gas was only half of it. A new account could pay the network fee and
+// still not join, because joining costs a $100 deposit it did not have. Every
+// judge who signed up hit that.
+
+test("a new account is given test dollars along with its gas", async () => {
+  const { chain, dripper } = fundedDripper();
+
+  const res = await dripper.ensure(NEW_ACCOUNT);
+
+  assert.equal(res.dollars.kind, "granted");
+  assert.deepEqual(chain.tokenSends, [{ to: NEW_ACCOUNT, amount: DEFAULT_DOLLAR_GRANT }]);
+  assert.equal(chain.dollarBook[NEW_ACCOUNT.toLowerCase()], DEFAULT_DOLLAR_GRANT);
+  if (res.dollars.kind === "granted") {
+    assert.equal(res.dollars.balance, DEFAULT_DOLLAR_GRANT, "reports the balance, so the UI can show it");
+  }
+});
+
+test("the grant covers a $100 deposit several times over", () => {
+  // The demo circle asks $100 to join and $100 a round. A grant that only just
+  // covered the deposit would strand someone one round in.
+  assert.ok(DEFAULT_DOLLAR_GRANT >= 100_000_000n * 5n, "at least five deposits");
+  assert.ok(DEFAULT_DOLLAR_MIN > 0n && DEFAULT_DOLLAR_MIN < DEFAULT_DOLLAR_GRANT);
+});
+
+test("someone mid-circle is not handed more every time they sign in", async () => {
+  const { chain, dripper } = fundedDripper();
+  chain.dollarBook[NEW_ACCOUNT.toLowerCase()] = DEFAULT_DOLLAR_MIN;
+
+  const res = await dripper.ensure(NEW_ACCOUNT);
+
+  assert.equal(res.dollars.kind, "already-funded");
+  assert.equal(chain.tokenSends.length, 0);
+});
+
+test("an account that spent almost everything is topped back up", async () => {
+  const { chain, dripper } = fundedDripper();
+  chain.dollarBook[NEW_ACCOUNT.toLowerCase()] = DEFAULT_DOLLAR_MIN - 1n;
+
+  const res = await dripper.ensure(NEW_ACCOUNT);
+
+  assert.equal(res.dollars.kind, "granted");
+  assert.equal(chain.dollarBook[NEW_ACCOUNT.toLowerCase()], DEFAULT_DOLLAR_GRANT, "brought up to the target");
+});
+
+// The rest of this block is one claim: a dollar problem must never stop
+// sign-up. Gas is load-bearing and still throws; dollars are not.
+
+test("a dripper out of test dollars still finishes sign-up", async () => {
+  const { chain, dripper } = fundedDripper(0n);
+
+  const res = await dripper.ensure(NEW_ACCOUNT);
+
+  assert.equal(res.topped, true, "gas still landed");
+  assert.equal(res.dollars.kind, "funder-empty", "said so, rather than throwing");
+  assert.equal(chain.tokenSends.length, 0, "nothing sent when it would fail");
+});
+
+test("a token transfer that reverts still finishes sign-up", async () => {
+  const chain = fakeChain(
+    { [FUNDER.toLowerCase()]: parseEther("5") },
+    { [FUNDER.toLowerCase()]: DEFAULT_DOLLAR_GRANT * 10n },
+  );
+  chain.funder.sendToken = async () => {
+    throw new Error("execution reverted");
+  };
+  const dripper = new GasDripper({
+    funder: chain.funder,
+    publicClient: chain.publicClient,
+    dollars: { token: AUSD },
+  });
+
+  const res = await dripper.ensure(NEW_ACCOUNT);
+
+  assert.equal(res.topped, true);
+  assert.equal(res.dollars.kind, "failed");
+});
+
+test("a dripper with no token support reports it, and gas is unaffected", async () => {
+  // The gas-only setup every existing caller uses.
+  const chain = fakeChain({ [FUNDER.toLowerCase()]: parseEther("5") });
+  const dripper = new GasDripper({ funder: chain.funder, publicClient: chain.publicClient });
+
+  const res = await dripper.ensure(NEW_ACCOUNT);
+
+  assert.equal(res.topped, true);
+  assert.equal(res.dollars.kind, "not-configured");
+});
+
+test("gas still throws when the funder is empty, even with dollars configured", async () => {
+  // The asymmetry is the point: no gas means nothing works at all.
+  const chain = fakeChain(
+    { [FUNDER.toLowerCase()]: parseEther("0.01") },
+    { [FUNDER.toLowerCase()]: DEFAULT_DOLLAR_GRANT * 10n },
+  );
+  const dripper = new GasDripper({
+    funder: chain.funder,
+    publicClient: chain.publicClient,
+    dollars: { token: AUSD },
+  });
+
+  await assert.rejects(dripper.ensure(NEW_ACCOUNT), /FunderEmptyError|has 0\.01 MON/);
+});
+
+test("an already-funded account still gets its dollars checked", async () => {
+  // Signing in on a second device: gas is fine, dollars may not be.
+  const chain = fakeChain(
+    { [FUNDER.toLowerCase()]: parseEther("5"), [NEW_ACCOUNT.toLowerCase()]: parseEther("1") },
+    { [FUNDER.toLowerCase()]: DEFAULT_DOLLAR_GRANT * 10n },
+  );
+  const dripper = new GasDripper({
+    funder: chain.funder,
+    publicClient: chain.publicClient,
+    dollars: { token: AUSD },
+  });
+
+  const res = await dripper.ensure(NEW_ACCOUNT);
+
+  assert.equal(res.topped, false, "no gas needed");
+  assert.equal(res.dollars.kind, "granted", "but the dollars were still missing");
+});
+
+test("a nonsensical dollar threshold is rejected at construction", () => {
+  const chain = fakeChain({});
+  assert.throws(
+    () =>
+      new GasDripper({
+        funder: chain.funder,
+        publicClient: chain.publicClient,
+        dollars: { token: AUSD, minBalance: 500_000_000n, topUpTo: 100_000_000n },
+      }),
+    /must exceed/,
+  );
 });
 
 test("defaults cover the demo circle, and are honest that they stop there", async () => {

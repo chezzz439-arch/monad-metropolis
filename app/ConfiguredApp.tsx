@@ -21,6 +21,7 @@ import {
   signInWithPasskey,
   type MeraAccount,
   type Deployment,
+  type DollarOutcome,
 } from "../sdk/src/index";
 import { clearStoredPasskeyAccount, loadStoredPasskeyAccount, saveStoredPasskeyAccount, type StoredPasskeyAccount } from "./services/passkeyStorage";
 import { circleName, loadCircleNames, rememberedCircleIds } from "./services/circleNames";
@@ -31,7 +32,7 @@ const TABS = ["Circles", "Send"] as const;
 type Tab = (typeof TABS)[number];
 
 /** Whether the new account has been made ready to spend. */
-type SetupState = "idle" | "working" | "failed";
+type SetupState = "idle" | "working" | "failed" | "ready";
 
 export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
   const [tab, setTab] = useState<Tab>("Circles");
@@ -44,6 +45,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [setupState, setSetupState] = useState<SetupState>("idle");
+  const [dollars, setDollars] = useState<DollarOutcome | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
   const rpId = typeof Constants.expoConfig?.extra?.meraRpId === "string" ? Constants.expoConfig.extra.meraRpId : "";
   const account: Address | null = meraAccount?.address ?? null;
@@ -128,8 +130,15 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
     if (!dripper) return;
     setSetupState("working");
     try {
-      await dripper.ensure(address);
-      setSetupState("idle");
+      const result = await dripper.ensure(address);
+      // Nothing to report when funding is not configured at all — skip the
+      // pause rather than showing a screen that says nothing.
+      if (result.dollars.kind === "not-configured") {
+        setSetupState("idle");
+        return;
+      }
+      setDollars(result.dollars);
+      setSetupState("ready");
     } catch {
       setSetupState("failed");
     }
@@ -195,6 +204,7 @@ export function ConfiguredApp({ deployment }: { deployment: Deployment }) {
     return (
       <SettingUpScreen
         failed={setupState === "failed"}
+        {...(setupState === "ready" && dollars ? { ready: dollars } : {})}
         onRetry={() => void prepareAccount(account)}
         onContinue={() => setSetupState("idle")}
       />

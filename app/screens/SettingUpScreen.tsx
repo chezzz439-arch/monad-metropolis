@@ -8,24 +8,59 @@
  */
 import { useEffect, useRef } from "react";
 import { Animated, Easing, StyleSheet, Text, View } from "react-native";
+import type { DollarOutcome } from "../../sdk/src/index";
 import { Button, ErrorNote, Logo, Screen } from "../components/ui";
+import { money } from "../design/copy";
 import { color, nativeDriver, radius, space, type } from "../design/tokens";
 
 const TRACK_WIDTH = 220;
+/** Long enough to read one short sentence, short enough not to feel stuck. */
+const READY_PAUSE_MS = 2600;
+
+/**
+ * What to say about the test dollars once setup is done.
+ *
+ * Only the dry case is worth a hedge. "We could not add test dollars" is a
+ * sentence someone can act on — ask a teammate to send some — whereas the
+ * underlying failures (an empty dripper, a refused RPC) name things the team
+ * guide keeps off the screen entirely.
+ */
+function dollarLine(dollars: DollarOutcome): { title: string; body: string } {
+  switch (dollars.kind) {
+    case "granted":
+      return {
+        title: `You have ${money(dollars.balance)} to try this with`,
+        body: "It is practice money on a test network — not real dollars.",
+      };
+    case "already-funded":
+      return {
+        title: `You have ${money(dollars.balance)}`,
+        body: "It is practice money on a test network — not real dollars.",
+      };
+    default:
+      return {
+        title: "Your account is ready",
+        body: "We could not add practice money right now. You can still look around, and anyone in your circle can send you some.",
+      };
+  }
+}
 
 export function SettingUpScreen({
   failed,
+  ready,
   onRetry,
   onContinue,
 }: {
   failed: boolean;
+  /** Present once funding finished; the screen then shows what landed. */
+  ready?: DollarOutcome;
   onRetry: () => void;
   onContinue: () => void;
 }) {
   const slide = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (failed) return;
+    if (failed || ready) return;
     const loop = Animated.loop(
       Animated.timing(slide, {
         toValue: 1,
@@ -36,7 +71,15 @@ export function SettingUpScreen({
     );
     loop.start();
     return () => loop.stop();
-  }, [slide, failed]);
+  }, [slide, failed, ready]);
+
+  // Shown, not waited on: the balance is worth seeing, but making someone tap
+  // past it adds a step to a flow whose whole point is that there are none.
+  useEffect(() => {
+    if (!ready) return;
+    const timer = setTimeout(onContinue, READY_PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [ready, onContinue]);
 
   const translateX = slide.interpolate({
     inputRange: [0, 1],
@@ -57,6 +100,12 @@ export function SettingUpScreen({
               />
             </View>
             <Button label="Continue anyway" variant="ghost" onPress={onContinue} />
+          </>
+        ) : ready ? (
+          <>
+            <Text style={styles.title}>{dollarLine(ready).title}</Text>
+            <Text style={styles.body}>{dollarLine(ready).body}</Text>
+            <Button label="Continue" onPress={onContinue} />
           </>
         ) : (
           <>

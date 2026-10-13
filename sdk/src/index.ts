@@ -65,12 +65,16 @@ export {
   shortAddress,
 } from "./format.ts";
 export {
+  DEFAULT_DOLLAR_GRANT,
+  DEFAULT_DOLLAR_MIN,
   DEFAULT_MIN_BALANCE,
   DEFAULT_TOP_UP_TO,
   FunderEmptyError,
   GasDripper,
   funderFromPrivateKey,
   isFunderKey,
+  type DollarGrant,
+  type DollarOutcome,
   type GasChainReader,
   type GasDripConfig,
   type GasDripResult,

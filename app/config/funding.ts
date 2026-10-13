@@ -1,12 +1,14 @@
-import { createPublicClient, http, parseEther } from "viem";
+import { createPublicClient, http, parseEther, parseUnits } from "viem";
 import { monadTestnet as monadTestnetChain } from "viem/chains";
-import { GasDripper, funderFromPrivateKey, isFunderKey, type Deployment } from "../../sdk/src/index";
+import { GasDripper, erc20Abi, funderFromPrivateKey, isFunderKey, type Deployment } from "../../sdk/src/index";
 
 declare const process: {
   env: {
     EXPO_PUBLIC_GAS_FUNDER_KEY?: string;
     EXPO_PUBLIC_GAS_DRIP_TOP_UP?: string;
     EXPO_PUBLIC_GAS_DRIP_MIN?: string;
+    EXPO_PUBLIC_DOLLAR_GRANT?: string;
+    EXPO_PUBLIC_DOLLAR_GRANT_MIN?: string;
   };
 };
 
@@ -48,6 +50,26 @@ const topUpTo = monAmount(process.env.EXPO_PUBLIC_GAS_DRIP_TOP_UP);
 const minBalance = monAmount(process.env.EXPO_PUBLIC_GAS_DRIP_MIN);
 
 /**
+ * The same idea for test dollars, written in whole dollars — `500`, not
+ * `500000000`. AUSD has 6 decimals, and asking whoever is fixing the demo at
+ * midnight to count them is how you end up granting a fiftieth of a cent.
+ */
+function dollarAmount(raw: string | undefined): bigint | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  try {
+    const parsed = parseUnits(value as `${number}`, 6);
+    return parsed > 0n ? parsed : undefined;
+  } catch {
+    console.warn(`Ignoring unparseable dollar grant ${JSON.stringify(value)}; using the default.`);
+    return undefined;
+  }
+}
+
+const dollarGrant = dollarAmount(process.env.EXPO_PUBLIC_DOLLAR_GRANT);
+const dollarMin = dollarAmount(process.env.EXPO_PUBLIC_DOLLAR_GRANT_MIN);
+
+/**
  * One dripper per endpoint for the life of the process. GasDripper
  * de-duplicates concurrent top-ups per address in instance state, so handing
  * out a fresh instance on every render would reintroduce the double-send it
@@ -62,12 +84,32 @@ export function dripperFor(deployment: Deployment): GasDripper | null {
   const existing = cache.get(deployment.rpcUrl);
   if (existing) return existing;
 
+  const publicClient = createPublicClient({
+    chain: monadTestnetChain,
+    transport: http(deployment.rpcUrl),
+  });
+
   const dripper = new GasDripper({
     funder: funderFromPrivateKey(funderKey, deployment.rpcUrl),
-    publicClient: createPublicClient({
-      chain: monadTestnetChain,
-      transport: http(deployment.rpcUrl),
-    }),
+    publicClient: {
+      getBalance: (args) => publicClient.getBalance(args),
+      waitForTransactionReceipt: (args) => publicClient.waitForTransactionReceipt(args),
+      getTokenBalance: ({ token, address }) =>
+        publicClient.readContract({
+          address: token,
+          abi: erc20Abi,
+          functionName: "balanceOf",
+          args: [address],
+        }) as Promise<bigint>,
+    },
+    // The dripper pays out test dollars from its own stock, filled from the
+    // faucet by hand ahead of the demo. The faucet is never called per user:
+    // its 60-second cooldown is global, so a queue of judges would serialise.
+    dollars: {
+      token: deployment.token,
+      ...(dollarGrant !== undefined ? { topUpTo: dollarGrant } : {}),
+      ...(dollarMin !== undefined ? { minBalance: dollarMin } : {}),
+    },
     // Spread rather than passed as undefined: GasDripper applies its own
     // documented defaults when a field is absent.
     ...(topUpTo !== undefined ? { topUpTo } : {}),
