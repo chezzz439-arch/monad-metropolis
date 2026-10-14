@@ -31,11 +31,27 @@ import { monadTestnet as monadTestnetChain } from "viem/chains";
  */
 
 /**
- * Top up when the account falls below this — roughly one `join` of headroom at
- * 100 gwei, so an account that still has a transaction or two in it is left
- * alone rather than being topped up on every sign-in.
+ * Top up when the account falls below this.
+ *
+ * SIZED FROM MONAD'S RESERVE RULE, not from what a transaction actually costs.
+ * Monad admits a transaction only if the signer can cover the whole gas limit
+ * at `maxFeePerGas` — `gas_limit * maxFeePerGas`, reserved up front and
+ * refunded after. It is not the fee that gets charged: the priciest write here
+ * burns about 0.021 MON but must *reserve* 0.0375.
+ *
+ * Worked example from the rejection this constant was rewritten for, with
+ * viem's own numbers (`maxFeePerGas = baseFee * 1.2 + priority`, which came to
+ * 182.4 gwei at a ~150 gwei base fee):
+ *
+ *   join that fills a circle   205,514 gas -> 0.0375 MON reserved
+ *   contribute                 151,721 gas -> 0.0277 MON reserved
+ *
+ * So this floor has to clear a single `join`'s reserve with room for the base
+ * fee to climb, or an account that looks funded cannot send anything. At the
+ * old 0.02 an account sitting on 0.021 MON was declared fine and then had its
+ * payment refused by the node.
  */
-export const DEFAULT_MIN_BALANCE = parseEther("0.02");
+export const DEFAULT_MIN_BALANCE = parseEther("0.06");
 
 /**
  * Top up to this.
@@ -51,13 +67,21 @@ export const DEFAULT_MIN_BALANCE = parseEther("0.02");
  * first round. The app told them "You do not have enough in your balance",
  * which is about dollars, and their dollars were fine.
  *
- * It is still deliberately small, because {@link GasDripper.ensure} is now
- * called before every write rather than only at sign-in: an account that runs
- * low mid-circle is topped straight back up. A large upfront grant would
- * instead strand MON in accounts that never spend it, and the funder is the
- * scarcest thing in a demo — roughly 20 sign-ups per MON.
+ * SIZED TO SURVIVE A WHOLE SIGN-UP-TO-PAYMENT RUN. 0.05 did not, and the live
+ * site proved it: an organizer spent 0.0177 creating, ~0.005 approving and
+ * 0.021 joining, which left 0.006 — and Monad then refused their payment with
+ * "Signer had insufficient balance", because admitting a `contribute` needs
+ * 0.0277 MON *reserved* (see {@link DEFAULT_MIN_BALANCE}). Four writes back to
+ * back have to stay clear of that floor the whole way, so this is the floor
+ * plus one join's reserve.
+ *
+ * Kept as small as that allows, because {@link GasDripper.ensure} runs before
+ * every write rather than only at sign-in, so an account that runs low
+ * mid-circle is topped straight back up. A larger grant would strand MON in
+ * accounts that never spend it, and the funder is the scarcest thing in a demo
+ * — about 8 sign-ups per MON at this size.
  */
-export const DEFAULT_TOP_UP_TO = parseEther("0.05");
+export const DEFAULT_TOP_UP_TO = parseEther("0.12");
 
 /**
  * Test dollars handed to a new account, in AUSD's 6-decimal units — $500.

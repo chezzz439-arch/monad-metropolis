@@ -113,12 +113,23 @@ still throws. An account with gas but no money can sign in, look around, and be
 topped up by a teammate — so if the dripper runs dry, setup says so in a
 sentence and finishes anyway.
 
-**Check the dripper before you demo.** Every sign-up costs it about 0.06 MON —
-0.05 handed over, plus the fee on the AUSD transfer — so roughly 20 sign-ups per
+**Check the dripper before you demo.** Every sign-up costs it about 0.13 MON —
+0.12 handed over, plus the fee on the AUSD transfer — so roughly 8 sign-ups per
 MON. It ran dry mid-testing and the only symptom was "We could not finish
 setting up your account", which looks like a bug in the app rather than an empty
 account. Gas is the binding constraint, not dollars: the $30,000 of AUSD claimed
 from the faucet is 60 sign-ups, while a MON balance disappears far faster.
+
+**Why the grant is 0.12 and not 0.05.** Monad admits a transaction only if the
+signer can cover the *whole gas limit* at `maxFeePerGas` — `gas_limit *
+maxFeePerGas`, reserved up front and refunded after — so what a write costs and
+what it needs in the account are different numbers. At the 182 gwei viem asks
+for when the base fee is ~150, the join that fills a circle burns 0.021 MON but
+must reserve 0.0375. A 0.05 grant therefore ran out mid-run: create, approve and
+join left 0.006 MON, and the next payment was refused by the node with `Signer
+had insufficient balance` while the account still held $400. That phrase says
+"balance", so it also has to be kept out of the dollars-shortfall copy — see the
+pattern list in `app/design/copy.ts`.
 
 ```sh
 # dripper address is derived from EXPO_PUBLIC_GAS_FUNDER_KEY, never printed here

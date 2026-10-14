@@ -92,6 +92,16 @@ const PATTERNS: [RegExp, string][] = [
   // problem in the first place. "exceeds the balance of the account" is viem's
   // phrasing for the fee case and is deliberately distinct from ERC-20's
   // "transfer amount exceeds balance", which really is a money problem.
+  // "signer had insufficient balance" is Monad's own refusal, and it is the one
+  // that actually reached a user. It arrives as {"code":-32000} on
+  // eth_sendRawTransaction when the signer cannot cover gas_limit *
+  // maxFeePerGas — the whole gas limit, reserved up front, which is far more
+  // than the fee that ends up charged. It says "balance", so it fell through to
+  // the dollars sentence below and told someone holding $400 that their money
+  // had run out. Matched by the "signer"/"balance" pairing, since the words
+  // "insufficient balance" alone are also how ERC-20s report a real shortfall.
+  [/signer had insufficient|insufficient balance for (gas|transfer)/i,
+    "Your account is being topped up. Give it a few seconds and try again."],
   [/insufficient ?funds|funds for gas|gas \* (price|gas fee)|exceeds the balance of the account|out of gas/i,
     "Your account is being topped up. Give it a few seconds and try again."],
   [/insufficient|exceeds balance|exceeds allowance/i, "You do not have enough in your balance for this."],

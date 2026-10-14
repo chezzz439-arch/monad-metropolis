@@ -128,6 +128,33 @@ test("exactly at the minimum is enough, and does not trigger a send", async () =
   assert.equal((await dripper.ensure(NEW_ACCOUNT)).topped, false);
 });
 
+// Sizing, pinned to what the chain actually demands rather than to what a
+// transaction costs. Monad admits a transaction only if the signer can reserve
+// gas_limit * maxFeePerGas up front, so "has enough to pay the fee" is not the
+// same question as "can get the transaction accepted". A live payment was
+// refused with "Signer had insufficient balance" while the account held 0.006
+// MON -- comfortably more than the ~0.002 the payment would have burned.
+const WORST_WRITE_GAS = 205_514n;              // the join that fills a circle
+const FEE_CEILING = 182_400_000_000n;          // viem's maxFeePerGas at a ~150 gwei base fee
+const WORST_RESERVE = WORST_WRITE_GAS * FEE_CEILING;
+
+test("the floor clears the priciest single write's reserve", () => {
+  assert.ok(
+    DEFAULT_MIN_BALANCE >= WORST_RESERVE,
+    `floor ${DEFAULT_MIN_BALANCE} must cover a reserve of ${WORST_RESERVE}`,
+  );
+});
+
+test("the grant survives create, approve, join and a payment", () => {
+  // The exact sequence that stranded an organizer. Reserves, not costs: each
+  // write has to be admitted while the balance is still above the floor.
+  const spent = parseEther("0.0177") + parseEther("0.005") + parseEther("0.021");
+  assert.ok(
+    DEFAULT_TOP_UP_TO - spent >= WORST_RESERVE,
+    "after creating, approving and joining there must still be a write's reserve left",
+  );
+});
+
 test("concurrent calls send one transaction, not two", async () => {
   // Sign-in and the first write race at startup. Two sends would reuse a
   // nonce and fail intermittently — the worst thing to meet on demo night.
@@ -353,28 +380,23 @@ test("a nonsensical dollar threshold is rejected at construction", () => {
   );
 });
 
-test("defaults cover the demo circle, and are honest that they stop there", async () => {
-  // forge --gas-report at the 102 gwei seen on testnet: join 0.0147,
-  // contribute 0.0094, settle 0.0084, withdraw 0.0054 MON.
-  const join = parseEther("0.0147");
-  const contribute = parseEther("0.0094");
-  const settle = parseEther("0.0084");
-
-  // What the two-minute demo actually spends: join, pay a couple of rounds,
-  // settle one. This has to fit or sign-up is pointless.
-  const demoCircleCost = join + contribute * 2n + settle;
+test("defaults cover the demo circle, and stay within the funder's means", async () => {
+  // Measured on chain at 102 gwei: join 0.021, contribute 0.0155, settle
+  // ~0.0084. Spending is the easy half — what actually gates a write is the
+  // reserve above, which the floor has to clear every time.
+  const demoCircleCost = parseEther("0.021") + parseEther("0.0155") * 2n + parseEther("0.0084");
   assert.ok(
     DEFAULT_TOP_UP_TO > demoCircleCost,
     `the drip must cover the demo circle (${demoCircleCost} wei)`,
   );
 
-  // And what it deliberately does NOT cover, so nobody raises the constant
-  // without reading why it is low: a full five-round circle is ~0.0755 MON.
-  // The funder holds a fixed amount and every sign-up takes a slice, so this
-  // trades per-account headroom for how many accounts a demo can mint.
+  // An upper bound, because the funder holds a fixed amount and every sign-up
+  // takes a slice: this trades per-account headroom against how many accounts
+  // a demo can mint. At 0.12 a 5 MON funder is good for about 40 sign-ups,
+  // which is the number to re-check before raising this again.
   assert.ok(
-    DEFAULT_TOP_UP_TO < parseEther("0.0755"),
-    "if this now covers a whole circle, update the comment on DEFAULT_TOP_UP_TO",
+    DEFAULT_TOP_UP_TO <= parseEther("0.15"),
+    "raising this past 0.15 drops a 5 MON funder under ~33 sign-ups — say so in the README first",
   );
 
   // The constructor rejects topUpTo <= minBalance, so every top-up sends

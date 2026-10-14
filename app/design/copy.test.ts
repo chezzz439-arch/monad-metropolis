@@ -24,6 +24,22 @@ test("running out of fee money is not reported as running out of money", () => {
   assert.doesNotMatch(message, BANNED);
 });
 
+// The one that actually reached a user on the live site. Monad refuses the
+// transaction itself with {"code":-32000,"message":"Signer had insufficient
+// balance"} when the signer cannot reserve gas_limit * maxFeePerGas. Because it
+// says "balance", it landed on the dollars sentence and told someone holding
+// $400 that their money had run out, on a payment of $100.
+test("Monad's own refusal is a fee problem, not a money problem", () => {
+  const monad = new Error(
+    'RPC Request failed. Details: Signer had insufficient balance\nVersion: viem@2.57.5',
+  );
+  const message = friendlyError(monad);
+
+  assert.match(message, /topped up/i);
+  assert.doesNotMatch(message, /enough in your balance/i, "their dollars were fine");
+  assert.doesNotMatch(message, BANNED);
+});
+
 test("viem's own wordings for a fee shortfall are all recognised", () => {
   // Every shape viem actually produces. The class name is one word, which is
   // what defeated the first version of this pattern and sent a fee problem to
