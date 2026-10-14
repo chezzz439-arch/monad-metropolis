@@ -51,6 +51,9 @@ const UNITS = 1_000_000;
 export function approx(amount: bigint, code: CurrencyCode): string | null {
   const currency = currencyFor(code);
   if (currency.code === "USD") return null;
+  // "≈ ₹0" under "$0" translates nothing. Seen on a round that had just
+  // started, where it sat under the empty pot adding a line and no meaning.
+  if (amount === 0n) return null;
 
   const dollars = Number(amount) / UNITS;
   const converted = dollars * currency.perDollar;

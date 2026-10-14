@@ -43,7 +43,12 @@ test("small amounts keep their pennies, where rounding would erase them", () => 
   // A dollar in pounds is 0.79. Rounded to whole units that is "£1", which
   // reads as parity and hides the conversion entirely.
   assert.equal(approx(1_000_000n, "GBP"), "≈ £0.79");
-  assert.equal(approx(0n, "GBP"), "≈ £0");
+});
+
+test("an empty pot gets no translation", () => {
+  // Seen on the live site at the top of a round: "≈ ₹0" sat under "$0",
+  // adding a line and no meaning.
+  for (const { code } of CURRENCIES) assert.equal(approx(0n, code), null);
 });
 
 test("a currency the table does not know falls back rather than throwing", () => {
