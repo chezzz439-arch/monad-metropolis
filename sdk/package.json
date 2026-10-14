@@ -1,0 +1,30 @@
+{
+  "name": "@chitcircle/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Data and transaction layer for Chit Circle. The UI calls these hooks; nothing else talks to the chain.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/*.test.ts\"",
+    "test:e2e": "node --test --test-timeout=180000 \"test/e2e/*.e2e.ts\"",
+    "abi": "node scripts/gen-abi.mjs"
+  },
+  "dependencies": {
+    "@category-labs/mera": "^0.2.0",
+    "@noble/hashes": "^1.8.0",
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
+    "viem": "^2.21.0"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^18.3.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -50,6 +50,10 @@ The test we used: *could a bank or fintech app do this the same way?* For Chit C
 
 **Distribution plan for the pitch:** existing circles already have a WhatsApp group. One invite link brings in the whole group, so each new circle brings in 5–20 users.
 
+**Invite link mechanics — unowned, needs doing.** The SDK builds both an https link (`https://chitcircle.app/c/7?chain=…&at=…`) and a deep link (`chitcircle://circle/7?…`). WhatsApp only makes the https one tappable; a custom scheme renders as dead text. But tapping an https link opens the *browser*, not the app, unless the domain is configured for iOS universal links / Android app links — which is real domain configuration we are not doing before Tuesday.
+
+The cheap fix: a one-page site at the live product URL that immediately tries the `chitcircle://` deep link and otherwise shows "Open in Chit Circle" plus install steps. We need a live product link for the submission anyway (§11), so this is the same piece of work. **Must be tested by tapping the link inside WhatsApp on a real phone** — in-app browsers are exactly where this breaks, and a simulator won't show it. Decide the owner at Saturday's check-in; it is a web page, not app code, so it does not block Aadit's screens.
+
 **Legal note:** formal chit funds are regulated in India (Chit Funds Act, 1982). Position this as a tool for informal circles among people who already know each other, and say a compliance review comes before launch. We are not lawyers.
 
 ## 4. User workflow
@@ -204,7 +208,7 @@ Merge into `main` through pull requests. Freeze `main` at **Oct 13, 12 PM ET**.
 
 | Risk | Impact | Plan |
 |---|---|---|
-| No testnet AUSD | We miss the Agora bounty ($10k) | Ask Agora tonight. Check docs.agora.finance/contract-overview. Fallback decision by Sat noon |
+| AUSD faucet access | We cannot fund real test transactions | Use Agora's published Monad testnet AUSD (`0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC`) and faucet (`0xd236c18D274E54FAccC3dd9DDA4b27965a73ee6C`); verify availability before the demo |
 | Mera React Native issues | Blocks everything | Kaushik tests the React Native recipe first thing. Fallback: mobile web app (PWA) with passkeys. Check this still counts as "mobile app" for Agora |
 | Signing session limits weaker than planned | Lower Mera UX score | Enforce in the app and say so honestly |
 | Bid mode doesn't finish | Lose Many Keys only | It's a stretch goal; the fixed-order flow is enough for everything else |
@@ -218,6 +222,7 @@ Merge into `main` through pull requests. Freeze `main` at **Oct 13, 12 PM ET**.
 - [ ] Demo video ≤3 min (live product, Monad transactions shown)
 - [ ] Pitch video ≤2 min (team, problem, why us)
 - [ ] Live product link + judge access instructions
+- [ ] Invite landing page at that link (tries the deep link, else "Open in Chit Circle") — tested from inside WhatsApp on a real phone, see §3
 - [ ] Track: Consumer Products & Payments
 - [ ] Bounties: Agora Cross-Border Payments, Best Mera-Powered UX, Mera: One Passkey, Many Keys
 - [ ] Optional: 30-sec product ad

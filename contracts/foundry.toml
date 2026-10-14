@@ -1,0 +1,24 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+
+# Required for Sourcify verification on Monad, per docs.monad.xyz. Without
+# these the explorer cannot match our bytecode and the verify step fails after
+# the deploy has already landed. Deliberately not setting Monad's suggested
+# `chain_id`/`eth-rpc-url` here: those would also apply to `forge test` and the
+# anvil-backed e2e suite, which must stay on 31337.
+# docs.monad.xyz writes these as `metadata` / `metadata_hash`, which Foundry
+# 1.8.5 does not recognise — it warns "unknown config" and ignores them. These
+# are the real keys for the same intent: keep the metadata, drop the IPFS hash.
+bytecode_hash = "none"
+use_literal_content = true  # embed source, not just a hash
+
+[rpc_endpoints]
+monad_testnet = "${MONAD_TESTNET_RPC_URL}"
+
+[etherscan]
+monad_testnet = { key = "${MONAD_EXPLORER_API_KEY}", url = "${MONAD_EXPLORER_API_URL}" }
