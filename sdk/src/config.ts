@@ -112,11 +112,69 @@ export const RECEIPT_POLL_MS = 250;
 /**
  * Calls a second to allow, against the RPC's ceiling of 15.
  *
- * The margin absorbs what we cannot see: a retry viem fires internally, and
- * another tab of the same app on the same IP — which is not hypothetical,
- * since demoing this means two browser profiles open side by side.
+ * A WHOLE-BROWSER budget, not a per-tab one. The earlier 10 was described as
+ * leaving room for a second tab and did not: the window was module-level, so
+ * each tab's JS context got its own 10 and two profiles side by side asked for
+ * 20 against a ceiling of 15. That is not a hypothetical — it is the demo, and
+ * it broke a live run the moment both tabs were polling, with the first
+ * payment already settled on chain and the screen reporting a busy network.
+ *
+ * {@link paced} now shares the window through localStorage where it exists, so
+ * this is the total across every tab of the origin. Left under 15 to absorb
+ * what we still cannot see from here: viem's internal retries, and the odd
+ * `cast` call from a terminal during testing.
  */
-export const RPC_CALLS_PER_SECOND = 10;
+export const RPC_CALLS_PER_SECOND = 12;
+
+/**
+ * How many times to quietly retry Monad's own rate-limit refusal.
+ *
+ * viem will not do this for us. The refusal arrives as HTTP 200 carrying
+ * `{"code":-32011,"message":"requests limited to 15/sec"}`, so its transport
+ * sees a successful request with an error payload, not a failure worth
+ * retrying — `retryCount` never fires. Waiting out a sliding window takes about
+ * a second, so a handful of backed-off attempts turns a visible error into a
+ * short pause.
+ */
+const RATE_LIMIT_RETRIES = 4;
+
+/** Monad's refusal, in every shape it has arrived in. */
+function isRateLimited(error: unknown): boolean {
+  const text =
+    error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error ?? "");
+  return /-32011|limited to \d+\s*\/\s*sec|rate.?limit|\b429\b|too many requests/i.test(text);
+}
+
+/**
+ * Where tabs of the same origin agree on how much budget is left.
+ *
+ * localStorage is synchronous and shared across same-origin tabs, which is all
+ * this needs. Two tabs can still interleave a read and a write and both take
+ * the same slot; that is why {@link RPC_CALLS_PER_SECOND} sits under the real
+ * ceiling rather than on it. Absent on React Native and in Node, where there is
+ * only ever one context anyway, so it falls back to the in-memory window.
+ */
+const SHARED_WINDOW_KEY = "chitcircle.rpc.v1:";
+
+function sharedStamps(endpoint: string): number[] | null {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(SHARED_WINDOW_KEY + endpoint);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as number[]) : [];
+  } catch {
+    return null;
+  }
+}
+
+function storeStamps(endpoint: string, stamps: number[]): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(SHARED_WINDOW_KEY + endpoint, JSON.stringify(stamps));
+  } catch {
+    // A full or disabled store is not worth failing a request over.
+  }
+}
 
 /**
  * Hold a transport under a calls-per-second ceiling.
@@ -160,13 +218,17 @@ export function paced(inner: Transport, callsPerSecond: number, endpoint: string
   const slot = async (): Promise<void> => {
     for (;;) {
       const now = Date.now();
-      while (sent.length > 0 && now - sent[0]! >= 1000) sent.shift();
-      if (sent.length < callsPerSecond) {
-        sent.push(now);
+      // Prefer the cross-tab window; fall back to this context's own.
+      const shared = sharedStamps(endpoint);
+      const stamps = shared ?? sent;
+      while (stamps.length > 0 && now - stamps[0]! >= 1000) stamps.shift();
+      if (stamps.length < callsPerSecond) {
+        stamps.push(now);
+        if (shared) storeStamps(endpoint, stamps);
         return;
       }
       // Wait exactly until the oldest call leaves the window.
-      await new Promise((r) => setTimeout(r, 1000 - (now - sent[0]!) + 5));
+      await new Promise((r) => setTimeout(r, 1000 - (now - stamps[0]!) + 5));
     }
   };
 
@@ -176,11 +238,22 @@ export function paced(inner: Transport, callsPerSecond: number, endpoint: string
     // Serialised through one chain so concurrent callers take slots in order;
     // without it they all read the same window and all decide to proceed.
     const request = (args: unknown, reqOpts?: unknown) => {
-      const next = window.chain.then(slot).then(() => inner_(args, reqOpts));
-      // The chain must never carry a rejection forward, or one refused call
-      // wedges every later one behind it.
-      window.chain = next.catch(() => {});
-      return next;
+      const attempt = async (n: number): Promise<unknown> => {
+        const next = window.chain.then(slot).then(() => inner_(args, reqOpts));
+        // The chain must never carry a rejection forward, or one refused call
+        // wedges every later one behind it.
+        window.chain = next.catch(() => {});
+        try {
+          return await next;
+        } catch (error) {
+          if (n >= RATE_LIMIT_RETRIES || !isRateLimited(error)) throw error;
+          // Backed off, and the next attempt queues for its own slot, so the
+          // window has drained by the time it goes out.
+          await new Promise((r) => setTimeout(r, 400 * (n + 1)));
+          return attempt(n + 1);
+        }
+      };
+      return attempt(0);
     };
     return { ...transport, request: request as typeof transport.request };
   }) as Transport;

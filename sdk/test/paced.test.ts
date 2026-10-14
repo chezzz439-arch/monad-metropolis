@@ -91,10 +91,74 @@ test("a failing call does not wedge the queue behind it", async () => {
 test("the configured ceiling leaves room under Monad's real limit", () => {
   // The RPC refuses above 15 a second, as `{"code":-32011,"message":"requests
   // limited to 15/sec"}` inside an HTTP 200. The margin absorbs what the pacer
-  // cannot see: viem's own internal retries, and a second browser profile on
-  // the same IP — which is how this app gets demoed.
+  // cannot see even with the cross-tab window: viem's own internal retries, and
+  // a `cast` call from a terminal while testing.
   assert.ok(RPC_CALLS_PER_SECOND < 15, "must sit under the documented ceiling");
   assert.ok(RPC_CALLS_PER_SECOND >= 8, "but not so low that a screen crawls");
+});
+
+test("Monad's rate-limit refusal is retried rather than surfaced", async () => {
+  // viem will not retry this one. It comes back as HTTP 200 carrying a
+  // JSON-RPC error, so the transport counts it a success and `retryCount` never
+  // fires — which is how a settled payment ended up behind "The network is
+  // busy" on a live run.
+  let calls = 0;
+  const flaky = ((() => ({
+    config: {},
+    value: {},
+    request: async () => {
+      calls += 1;
+      if (calls <= 2) throw new Error('RPC Request failed. Details: requests limited to 15/sec');
+      return "0xok";
+    },
+  })) as unknown) as Transport;
+
+  const request = paced(flaky, 12, "retry-endpoint")({})!.request;
+  const result = await request({ method: "eth_call" } as never);
+
+  assert.equal(result, "0xok", "the caller sees the eventual success");
+  assert.equal(calls, 3, "two refusals were absorbed");
+});
+
+test("a refusal that is not a rate limit is not retried", async () => {
+  // Retrying a revert would just be slower wrongness.
+  let calls = 0;
+  const reverting = ((() => ({
+    config: {},
+    value: {},
+    request: async () => {
+      calls += 1;
+      throw new Error("execution reverted: AlreadyPaid");
+    },
+  })) as unknown) as Transport;
+
+  const request = paced(reverting, 12, "revert-endpoint")({})!.request;
+  await assert.rejects(() => request({ method: "eth_call" } as never), /AlreadyPaid/);
+  assert.equal(calls, 1, "straight through, once");
+});
+
+test("the budget is shared across tabs when there is somewhere to share it", async () => {
+  // The real shape of the bug: the window was module-level, so each tab's JS
+  // context believed it owned the whole ceiling and two profiles asked for
+  // double. Simulated here with a localStorage stand-in, since two tabs cannot
+  // be had in one Node process -- what is asserted is that the pacer consults
+  // shared storage rather than only its own array.
+  const store = new Map<string, string>();
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+  };
+  try {
+    const tab = recording();
+    const request = paced(tab.transport, 4, "cross-tab")({})!.request;
+    await Promise.all(Array.from({ length: 4 }, () => request({ method: "eth_call" } as never)));
+
+    const key = [...store.keys()].find((k) => k.includes("cross-tab"));
+    assert.ok(key, "the window was written somewhere another tab can read it");
+    assert.equal(JSON.parse(store.get(key!)!).length, 4, "and it records what this tab spent");
+  } finally {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
 });
 
 test("two clients on the same endpoint share one budget", async () => {
