@@ -296,7 +296,7 @@ Nothing logs that as a failure. A brand-new account's first screen said
 devtools; it was found by dumping response bodies during sign-up.
 
 So the transport paces itself — `paced` in `sdk/src/config.ts`, a sliding window
-at 10 a second. Three things about it are load-bearing:
+at 7 a second. Four things about it are load-bearing:
 
 - **Sliding, not fixed.** A fixed window lets a burst at the end of one second
   and another at the start of the next through at twice the rate — which is
@@ -305,7 +305,19 @@ at 10 a second. Three things about it are load-bearing:
   the signer's wallet client, and viem issues about five calls for one write.
   Two separate pacers each assumed they owned the whole ceiling and a join still
   failed on the live site. The window is module-level, keyed by endpoint.
-- **Queued, not dropped.** Every call is something a screen is waiting on.
+- **Per tab, so the number is the ceiling divided by the tabs a demo opens —
+  not the ceiling itself.** The window is per JS context, so two profiles side
+  by side at 10 asked for 20 against a limit of 15. That is the demo, and it
+  broke a run with the first payment already settled on chain and the screen
+  still saying the network was busy. 7 keeps two tabs at 14. Sharing the window
+  through `localStorage` was tried and reverted: synchronous main-thread I/O on
+  every call, from two tabs contending on one key, stalled the renderer until a
+  WebAuthn prompt timed out. The honest fix is `BroadcastChannel`.
+- **Queued, not dropped, and the refusal is retried.** Every call is something a
+  screen is waiting on. viem will not retry a `-32011` for us — it arrives
+  inside an HTTP 200, so the transport counts it a success with an error payload
+  and `retryCount` never fires. `paced` backs off and retries it four times,
+  which is about how long a sliding window takes to drain.
 
 Read volume still matters and is kept low. `rosterFrom()` builds the member list
 from the `CircleView` already in hand, and `isMember`/`paidThisRound` come from
