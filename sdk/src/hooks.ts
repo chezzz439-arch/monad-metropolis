@@ -146,6 +146,31 @@ export function useCircle(circleId: bigint | null, me?: Address, pollMs = 4000):
   return { data, loading, error, refresh };
 }
 
+/**
+ * Whether the probe's own reading is safe to put on screen before the full
+ * read lands.
+ *
+ * Only within the same round. A settle moves the round on, and pairing its
+ * fresh pot with the previous round's recipient and debtors — which only the
+ * full read can update — would show a confident wrong answer for a second or
+ * so. Payments, which is what the fast path exists for, leave the round alone.
+ *
+ * Exported so the rule can be tested without a renderer, like
+ * {@link primaryActionFor}: a wrong answer here is a wrong number in front of
+ * someone, not a failed assertion.
+ */
+export type ProbePatch = Pick<CircleView, "pot" | "round" | "started" | "finished">;
+
+export function probePatchFor(circle: ProbePatch, previousRound: number | null): ProbePatch | null {
+  if (previousRound === null || previousRound !== circle.round) return null;
+  return {
+    pot: circle.pot,
+    round: circle.round,
+    started: circle.started,
+    finished: circle.finished,
+  };
+}
+
 /** `pot:round:started:finished` — everything a payment or a settle moves. */
 function fingerprintOf(circle: Pick<CircleView, "pot" | "round" | "started" | "finished">): string {
   return `${circle.pot}:${circle.round}:${circle.started}:${circle.finished}`;
@@ -189,11 +214,29 @@ export function useLiveCircle(
   const { data, refresh } = base;
   const [changedAt, setChangedAt] = useState<number | null>(null);
   const fingerprint = useRef<string | null>(null);
+  /** Tracked on its own rather than parsed back out of the fingerprint. */
+  const lastRound = useRef<number | null>(null);
+  /**
+   * The probe's own reading of the headline numbers, shown before the full
+   * read catches up.
+   *
+   * The probe already holds the pot — it is one `getCircle` — and throwing it
+   * away meant the pot waited for the twelve-call refresh behind it. Measured
+   * across two profiles on the live site, someone else's payment took 6.0s to
+   * appear; the brief asked for one to two. This is the same number arriving at
+   * probe speed, with the refresh still running for the roster behind it.
+   */
+  const [patch, setPatch] = useState<ProbePatch | null>(null);
 
   // Keep the probe's idea of "current" in step with the full read, so an
   // action you took yourself does not come back as someone else's news.
   useEffect(() => {
-    if (data) fingerprint.current = fingerprintOf(data);
+    if (data) {
+      fingerprint.current = fingerprintOf(data);
+      lastRound.current = data.round;
+    }
+    // The full read is authoritative, so its arrival retires the patch.
+    setPatch(null);
   }, [data]);
 
   useEffect(() => {
@@ -208,11 +251,15 @@ export function useLiveCircle(
         // First probe only learns the current value; it is not news.
         if (fingerprint.current === null) {
           fingerprint.current = next;
+          lastRound.current = circle.round;
           return;
         }
         if (next === fingerprint.current) return;
+        const wasRound = lastRound.current;
         fingerprint.current = next;
+        lastRound.current = circle.round;
         setChangedAt(Date.now());
+        setPatch(probePatchFor(circle, wasRound));
         refresh();
       } catch {
         // A probe is a convenience and its failures are not worth reporting:
@@ -228,7 +275,8 @@ export function useLiveCircle(
     };
   }, [client, circleId, probeMs, refresh]);
 
-  return { ...base, changedAt };
+  const merged = data && patch ? { ...data, ...patch } : data;
+  return { ...base, data: merged, changedAt };
 }
 
 /** AUSD balance for the header. */

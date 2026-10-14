@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Address } from "viem";
-import { primaryActionFor } from "../src/hooks.ts";
+import { primaryActionFor, probePatchFor } from "../src/hooks.ts";
 import type { CircleView, MemberStatus } from "../src/types.ts";
 
 const ME = "0x00000000000000000000000000000000000000a1" as Address;
@@ -115,4 +115,38 @@ test("a defaulter gets no deposit back", () => {
 
 test("no circle means no action", () => {
   assert.equal(primaryActionFor(null).kind, "none");
+});
+
+// -- the fast path's one rule ----------------------------------------------
+
+/**
+ * `useLiveCircle` polls one cheap call and shows the pot from it immediately,
+ * rather than waiting for the twelve-call read behind it. Measured across two
+ * profiles on the live site, someone else's payment took 6.0s to show up where
+ * the brief asked for one to two seconds. The rule below is what keeps that
+ * shortcut honest.
+ */
+test("a payment's pot is shown straight away", () => {
+  const probed = { pot: 200n, round: 0, started: true, finished: false };
+  assert.deepEqual(probePatchFor(probed, 0), probed, "same round, so it is safe to show");
+});
+
+test("a settle's pot waits for the full read", () => {
+  // The dangerous case. Settling empties the pot AND moves the round on, so
+  // the recipient and the list of who still owes are both stale — and only the
+  // expensive read refreshes them. Showing round 2's empty pot beside round
+  // 1's recipient would be a confident wrong answer.
+  const afterSettle = { pot: 0n, round: 1, started: true, finished: false };
+  assert.equal(probePatchFor(afterSettle, 0), null);
+});
+
+test("the first probe of a screen shows nothing of its own", () => {
+  // Nothing to compare against yet, so there is no news to report.
+  assert.equal(probePatchFor({ pot: 100n, round: 0, started: true, finished: false }, null), null);
+});
+
+test("a circle finishing waits for the full read too", () => {
+  // The last settle both finishes the circle and moves the round.
+  const done = { pot: 0n, round: 2, started: true, finished: true };
+  assert.equal(probePatchFor(done, 1), null);
 });
