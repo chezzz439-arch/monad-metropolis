@@ -9,7 +9,7 @@ import { SendReceiveScreen } from "./screens/SendReceiveScreen";
 import { SettingUpScreen } from "./screens/SettingUpScreen";
 import { WelcomeScreen } from "./screens/WelcomeScreen";
 import { AppBar, Avatar, Button, Logo, Screen, Skeleton, TabBar } from "./components/ui";
-import { color, radius, space, type } from "./design/tokens";
+import { color, radius, space, tap, type } from "./design/tokens";
 import {
   ChitCircleProvider,
   MONAD_TESTNET_AUSD_FAUCET_ADDRESS,
@@ -26,6 +26,7 @@ import {
 import { clearStoredPasskeyAccount, loadStoredPasskeyAccount, saveStoredPasskeyAccount, type StoredPasskeyAccount } from "./services/passkeyStorage";
 import { circleName, loadCircleNames, rememberedCircleIds } from "./services/circleNames";
 import { clearInviteFromUrl, readInviteFromUrl, type InviteRoute } from "./services/inviteRoute";
+import { CURRENCIES, currentCurrency, loadCurrency, rememberCurrency, type CurrencyCode } from "./services/currency";
 import { dripperFor } from "./config/funding";
 
 const TABS = ["Circles", "Send"] as const;
@@ -362,6 +363,8 @@ function AccountSheet({
             <Text style={styles.idHint}>Share this if someone outside your circles wants to send you money.</Text>
           </View>
 
+          <CurrencyPicker />
+
           <Button label="Lock" variant="secondary" onPress={onLock} />
           <Button label="Sign out on this device" variant="ghost" onPress={onSignOut} />
         </Pressable>
@@ -370,8 +373,69 @@ function AccountSheet({
   );
 }
 
+/**
+ * Which currency to echo dollar amounts in.
+ *
+ * Labelled "approx." on purpose and in words: the rates are a fixed table, not
+ * a feed, so they are out of date the day they are written. Circles are
+ * denominated and settled in dollars either way -- this only changes a hint
+ * printed under the figure, never an amount anyone is charged.
+ */
+function CurrencyPicker() {
+  const [code, setCode] = useState<CurrencyCode>(currentCurrency());
+
+  useEffect(() => {
+    void loadCurrency().then(setCode);
+  }, []);
+
+  const choose = (next: CurrencyCode) => {
+    setCode(next);
+    void rememberCurrency(next);
+  };
+
+  return (
+    <View style={styles.currencyBlock}>
+      <Text style={styles.idLabel}>Also show amounts in</Text>
+      <View style={styles.currencyRow}>
+        {CURRENCIES.map((c) => (
+          <Pressable
+            key={c.code}
+            onPress={() => choose(c.code)}
+            accessibilityRole="button"
+            accessibilityLabel={c.label}
+            accessibilityState={{ selected: c.code === code }}
+            style={[styles.currencyChip, c.code === code && styles.currencyChipOn]}
+          >
+            <Text style={[styles.currencyChipText, c.code === code && styles.currencyChipTextOn]}>
+              {c.symbol} {c.code}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={styles.idHint}>
+        Rates are approx. and set by hand — a guide only. Circles are always in dollars.
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   boot: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.xxl },
+
+  currencyBlock: { gap: space.sm },
+  currencyRow: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
+  currencyChip: {
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: color.line,
+    minHeight: tap.min,
+    justifyContent: "center",
+  },
+  currencyChipOn: { backgroundColor: color.brand, borderColor: color.brand },
+  currencyChipText: { ...type.body, color: color.ink },
+  currencyChipTextOn: { color: color.onBrand, fontWeight: "700" },
 
   backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(22, 32, 44, 0.45)" },
   sheet: {

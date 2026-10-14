@@ -30,6 +30,7 @@ import { SuccessScreen, type Celebration } from "./SuccessScreen";
 import { color, radius, space, tap, type } from "../design/tokens";
 import { friendlyError, money, personName, timeLeft } from "../design/copy";
 import { shareInviteLink, type ShareOutcome } from "../services/shareInvite";
+import { approx, currentCurrency } from "../services/currency";
 
 /** How long to wait before trying a failed roster read again. */
 const ROSTER_RETRY_MS = 4000;
@@ -217,6 +218,8 @@ export function LiveCircleDetailScreen({
   const hasRoom = !circle.started && !circle.finished;
   /** Members of a circle that is not full yet are the only ones who can recruit. */
   const showInvite = hasRoom && Boolean(circle.me?.isMember);
+  /** The same pot in the viewer's own currency, or null when they read dollars. */
+  const homeAmount = approx(circle.pot, currentCurrency());
   /** Arrived from a link, but the circle filled up and started without them. */
   const closedToVisitor = circle.started && !circle.finished && !circle.me?.isMember;
 
@@ -228,6 +231,7 @@ export function LiveCircleDetailScreen({
           <CoinDrop at={coinAt} />
           <Text style={styles.potLabel}>Pot this round</Text>
           <CountUpMoney value={circle.pot} style={styles.potValue} />
+          {homeAmount ? <Text style={styles.potApprox}>{homeAmount}</Text> : null}
           <Text style={styles.potOf}>
             of {money(circle.expectedPot)} · {money(circle.contribution)} each
           </Text>
@@ -499,6 +503,8 @@ const styles = StyleSheet.create({
   potLabel: { ...type.label, color: "#A9BBD6" },
   potValue: { ...type.hero, color: color.onBrand, marginTop: space.xs },
   potOf: { ...type.body, color: "#C3D1E5", marginTop: space.xs },
+  // Secondary by design: the dollar figure is the amount, this is a hint.
+  potApprox: { ...type.body, color: "#9FB3CE", marginTop: 2 },
   potFooter: { marginTop: space.xxl, gap: space.lg },
   potTimer: { ...type.bodyStrong, color: color.highlight, marginTop: space.lg },
   potTimerTight: { ...type.bodyStrong, color: color.highlight },
