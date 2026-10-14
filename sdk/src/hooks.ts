@@ -177,7 +177,16 @@ function fingerprintOf(circle: Pick<CircleView, "pot" | "round" | "started" | "f
 }
 
 /**
- * A circle that keeps up with the other members, in about a second.
+ * A circle that keeps up with the other members.
+ *
+ * MEASURED, both directions, two Chrome profiles against the deployed site:
+ * **1.9s** from a payment landing on chain to the other profile's pot moving,
+ * no reload. Anchored to the payment's own block timestamp, with the sampling
+ * done over CDP so it adds no RPC load of its own. Earlier figures of 6.0s and
+ * 4.5s were measurement artefacts — a 1.5s screen-poll, and a clock that only
+ * started once the payer's own screen had confirmed. A third attempt said 40.6s
+ * and was worse than useless: it polled the contract during the window, which
+ * pushed past the RPC's ceiling and throttled the very probe being timed.
  *
  * TWO CADENCES, BECAUSE ONE DOES NOT FIT. Polling the whole view every second
  * is the obvious implementation and it does not work here: a full read is
